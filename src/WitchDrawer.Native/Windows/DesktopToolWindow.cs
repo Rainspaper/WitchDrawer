@@ -22,6 +22,7 @@ public sealed class DesktopToolWindow
     private const int XButtonUpMessage = 0x020C;
     private const int ExitSizeMoveMessage = 0x0232;
 
+    private const int WindowPositionChangingMessage = 0x0046;
     private const int WindowOwnerIndex = -8;
     private const int ExtendedStyleIndex = -20;
     private const nint ExtendedStyleAppWindow = 0x00040000;
@@ -43,6 +44,7 @@ public sealed class DesktopToolWindow
     private nint _originalOwner;
     private nint _desktopOwner;
     private bool _desktopOwnershipSuspendedForInput;
+    private bool _desktopOwnershipSuspendedForPopup;
 
     public DesktopToolWindow(nint handle)
     {
@@ -95,6 +97,45 @@ public sealed class DesktopToolWindow
             SetWindowPositionNoMove
             | SetWindowPositionNoSize
             | SetWindowPositionNoActivate);
+    }
+
+    public static bool IsWindowPositionChangingMessage(int message) =>
+        message == WindowPositionChangingMessage;
+
+    /// <summary>
+    /// 在 WM_WINDOWPOSCHANGING 里把插入位置强制为 HWND_BOTTOM，
+    /// 让盒子永远无法被抬到其它窗口之上（孤岛最下层）。
+    /// 修改的是消息携带的 WINDOWPOS 结构，系统随后会按此位置应用。
+    /// </summary>
+    public static void ForceBottomInsertAfter(nint windowPositionPointer)
+    {
+        if (windowPositionPointer == nint.Zero)
+        {
+            return;
+        }
+
+        try
+        {
+            var windowPosition = Marshal.PtrToStructure<WindowPosition>(windowPositionPointer);
+            windowPosition.HwndInsertAfter = WindowPositionBottom;
+            Marshal.StructureToPtr(windowPosition, windowPositionPointer, fDeleteOld: false);
+        }
+        catch
+        {
+            // 修改失败不致命：退化为常规置底逻辑。
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WindowPosition
+    {
+        public nint Hwnd;
+        public nint HwndInsertAfter;
+        public int X;
+        public int Y;
+        public int Cx;
+        public int Cy;
+        public uint Flags;
     }
 
     private static bool IsKeyDown(int virtualKey) =>
@@ -271,6 +312,59 @@ public sealed class DesktopToolWindow
 
         return restored;
     }
+
+    /// <summary>
+    /// 系统弹窗（如回收站确认框）与盒子同在 Shell 属主链时，临时剥离 Shell 属主，
+    /// 避免后续压底盒子时连带把弹窗一起压到普通程序下面。
+    /// </summary>
+    public bool SuspendDesktopOwnershipForPopup()
+    {
+        if (_desktopOwnershipSuspendedForPopup)
+        {
+            return true;
+        }
+
+        // 鼠标交互临时脱离期间不叠加弹窗脱离，避免状态互相覆盖。
+        if (_desktopOwnershipSuspendedForInput || !IsDesktopHosted)
+        {
+            return false;
+        }
+
+        var replacementOwner = _originalOwner != nint.Zero && IsWindow(_originalOwner)
+            ? _originalOwner
+            : nint.Zero;
+        SetWindowLongPtr(_handle, WindowOwnerIndex, replacementOwner);
+        if (GetWindow(_handle, GetWindowOwner) == _desktopOwner)
+        {
+            return false;
+        }
+
+        _desktopOwnershipSuspendedForPopup = true;
+        SendToBottom();
+        return true;
+    }
+
+    /// <summary>
+    /// 弹窗关闭后重新挂回 Shell 桌面属主，并压回桌面层。
+    /// </summary>
+    public bool RestoreDesktopOwnershipAfterPopup()
+    {
+        if (!_desktopOwnershipSuspendedForPopup)
+        {
+            return IsDesktopHosted;
+        }
+
+        _desktopOwnershipSuspendedForPopup = false;
+        var restored = TryAttachToDesktop();
+        if (restored)
+        {
+            SendToBottom();
+        }
+
+        return restored;
+    }
+
+    public bool IsDesktopOwnershipSuspendedForPopup => _desktopOwnershipSuspendedForPopup;
 
     public void SendToBottom()
     {

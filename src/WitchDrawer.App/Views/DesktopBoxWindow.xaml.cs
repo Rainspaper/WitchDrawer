@@ -203,10 +203,18 @@ public partial class DesktopBoxWindow : Window
 
     public void SetDesktopForeground(bool isForeground)
     {
-        // When Show Desktop is active, leave Explorer's owner-chain Z order
-        // untouched. On exit, return the boxes behind ordinary app windows.
         _desktopIsForeground = isForeground;
         SendToBottom();
+    }
+
+    public void SuspendDesktopOwnershipForShellPopup()
+    {
+        _nativeWindow?.SuspendDesktopOwnershipForPopup();
+    }
+
+    public void RestoreDesktopOwnershipAfterShellPopup()
+    {
+        _nativeWindow?.RestoreDesktopOwnershipAfterPopup();
     }
 
     private ListBox ActiveItemsList => ViewModel.IsMappingListMode ? FileList : IconList;
@@ -943,6 +951,14 @@ public partial class DesktopBoxWindow : Window
         nint longParameter,
         ref bool handled)
     {
+        // 强制置底：只要 Windows 想调整盒子 Z 序，插入位置一律 HWND_BOTTOM，
+        // 盒子永远在其他窗口（含系统弹窗）之下，彻底消除被抬起的闪动。
+        if (DesktopToolWindow.IsWindowPositionChangingMessage(message)
+            && longParameter != nint.Zero)
+        {
+            DesktopToolWindow.ForceBottomInsertAfter(longParameter);
+        }
+
         if (DesktopToolWindow.IsMouseActivationMessage(message))
         {
             // Detach before mouse input so Explorer cannot record this box as

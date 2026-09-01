@@ -49,6 +49,7 @@ public sealed class DesktopBoxManager
     private bool _closing;
     private bool _desktopIsForeground;
     private CancellationTokenSource? _foregroundChangeCts;
+    private CancellationTokenSource? _desktopContextMenuRestoreCts;
     private long _showDesktopShortcutObservedUntilTick;
     private GuideLineWindow? _verticalGuide;
     private GuideLineWindow? _horizontalGuide;
@@ -670,6 +671,9 @@ public sealed class DesktopBoxManager
         var foregroundChangeCts = Interlocked.Exchange(ref _foregroundChangeCts, null);
         foregroundChangeCts?.Cancel();
         foregroundChangeCts?.Dispose();
+        var desktopContextMenuRestoreCts = Interlocked.Exchange(ref _desktopContextMenuRestoreCts, null);
+        desktopContextMenuRestoreCts?.Cancel();
+        desktopContextMenuRestoreCts?.Dispose();
         _foregroundWindowMonitor.ForegroundWindowChanged -= OnForegroundWindowChanged;
         _foregroundWindowMonitor.Dispose();
         _mouseButtonMonitor.MouseButtonDown -= OnGlobalMouseButtonDown;
@@ -722,6 +726,15 @@ public sealed class DesktopBoxManager
         if (_closing)
         {
             return;
+        }
+
+        // 桌面空白处右键按下时：系统随后会弹桌面菜单/清理确认等 Shell 弹窗。
+        // 抢在弹窗出现前把盒子脱离 Shell 属主，避免弹窗被抬起时盒子一起闪到前层。
+        if (button == GlobalMouseButton.Right
+            && ForegroundWindowMonitor.IsDesktopWindow(
+                GlobalMouseButtonMonitor.HitTestWindowHandle(screenX, screenY)))
+        {
+            SuspendForDesktopContextMenu();
         }
 
         _desktopMouseButtonEvents.Writer.TryWrite(new DesktopMouseButtonEvent(
@@ -789,6 +802,34 @@ public sealed class DesktopBoxManager
         if (_closing)
         {
             return;
+        }
+
+        // Shell 属主弹窗（如回收站确认框）可能出现就把盒子连带抬起的闪动。
+        // 不等 80ms 防抖，立即在 UI 线程上先脱离属主并压底，减少闪烁。
+        if (windowHandle != nint.Zero
+            && !ForegroundWindowMonitor.IsDesktopWindow(windowHandle)
+            && ForegroundWindowMonitor.IsWindowOwnedByShell(windowHandle))
+        {
+            var dispatcher = Application.Current?.Dispatcher;
+            if (dispatcher is { HasShutdownStarted: false })
+            {
+                dispatcher.BeginInvoke(
+                    () =>
+                    {
+                        if (_closing)
+                        {
+                            return;
+                        }
+
+                        var isOwnBox = _windows.Values.Any(
+                            window => window.NativeHandle == windowHandle);
+                        if (!isOwnBox)
+                        {
+                            SuspendAllShellPopupOwnership();
+                        }
+                    },
+                    System.Windows.Threading.DispatcherPriority.Send);
+            }
         }
 
         if (DesktopToolWindow.IsShowDesktopShortcutPressed())
@@ -871,6 +912,20 @@ public sealed class DesktopBoxManager
         var isDesktopWindow = ForegroundWindowMonitor.IsDesktopWindow(windowHandle);
         var isDesktopBoxWindow = _windows.Values.Any(
             window => window.NativeHandle == windowHandle);
+        // 系统弹窗（如回收站确认框）与盒子同在 Shell 属主链：临时脱离属主，
+        // 避免压底盒子时把弹窗连带压到普通程序下面。
+        var isShellPopup = !isDesktopWindow
+            && !isDesktopBoxWindow
+            && ForegroundWindowMonitor.IsWindowOwnedByShell(windowHandle);
+        if (isShellPopup)
+        {
+            SuspendAllShellPopupOwnership();
+        }
+        else
+        {
+            RestoreAllShellPopupOwnership();
+        }
+
         var desktopIsForeground = ResolveDesktopForegroundState(
             isDesktopWindow,
             isDesktopBoxWindow);
@@ -911,6 +966,77 @@ public sealed class DesktopBoxManager
         foreach (var window in _windows.Values)
         {
             window.SetDesktopForeground(isForeground);
+        }
+    }
+
+    private void SuspendAllShellPopupOwnership()
+    {
+        foreach (var window in _windows.Values)
+        {
+            window.SuspendDesktopOwnershipForShellPopup();
+        }
+    }
+
+    /// <summary>
+    /// 桌面右键预挂起：先把盒子脱离 Shell 属主并压底，
+    /// 让后续 Shell 菜单/确认弹窗出现时不再把盒子带起来。
+    /// 3 秒后若前台已不是 Shell 弹窗则自动恢复挂载。
+    /// </summary>
+    private void SuspendForDesktopContextMenu()
+    {
+        SuspendAllShellPopupOwnership();
+
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.HasShutdownStarted)
+        {
+            return;
+        }
+
+        var next = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _desktopContextMenuRestoreCts, next);
+        previous?.Cancel();
+        previous?.Dispose();
+        var token = next.Token;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(3), token);
+                if (token.IsCancellationRequested || _closing)
+                {
+                    return;
+                }
+
+                var foreground = ForegroundWindowMonitor.GetCurrentForegroundWindow();
+                var stillShellPopup = foreground != nint.Zero
+                    && !ForegroundWindowMonitor.IsDesktopWindow(foreground)
+                    && ForegroundWindowMonitor.IsWindowOwnedByShell(foreground);
+                if (!stillShellPopup)
+                {
+                    await dispatcher.InvokeAsync(RestoreAllShellPopupOwnership);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            finally
+            {
+                if (ReferenceEquals(
+                        Interlocked.CompareExchange(ref _desktopContextMenuRestoreCts, null, next),
+                        next))
+                {
+                    next.Dispose();
+                }
+            }
+        }, token);
+    }
+
+    private void RestoreAllShellPopupOwnership()
+    {
+        foreach (var window in _windows.Values)
+        {
+            window.RestoreDesktopOwnershipAfterShellPopup();
         }
     }
 

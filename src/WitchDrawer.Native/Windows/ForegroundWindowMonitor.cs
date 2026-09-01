@@ -31,6 +31,8 @@ public sealed class ForegroundWindowMonitor : IDisposable
 
     public bool IsActive => _hook != nint.Zero;
 
+    private const uint GetWindowOwner = 4;
+
     public static nint GetCurrentForegroundWindow()
     {
         return GetForegroundWindow();
@@ -52,6 +54,26 @@ public sealed class ForegroundWindowMonitor : IDisposable
     {
         return string.Equals(className, "Progman", StringComparison.Ordinal)
             || string.Equals(className, "WorkerW", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 判断一个前台窗口是否属于 Shell 桌面属主链（例如回收站确认弹窗）。
+    /// 这类窗口与桌面盒共用 Progman 属主链，压盒子时可能连带拖动弹窗层级。
+    /// </summary>
+    public static bool IsWindowOwnedByShell(nint windowHandle)
+    {
+        if (windowHandle == nint.Zero)
+        {
+            return false;
+        }
+
+        var shellWindow = GetShellWindow();
+        if (shellWindow == nint.Zero)
+        {
+            return false;
+        }
+
+        return GetWindow(windowHandle, GetWindowOwner) == shellWindow;
     }
 
     public void Dispose()
@@ -116,4 +138,10 @@ public sealed class ForegroundWindowMonitor : IDisposable
         nint windowHandle,
         StringBuilder className,
         int maximumCount);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetShellWindow();
+
+    [DllImport("user32.dll")]
+    private static extern nint GetWindow(nint windowHandle, uint command);
 }
