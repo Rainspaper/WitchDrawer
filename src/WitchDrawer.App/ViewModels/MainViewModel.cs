@@ -58,6 +58,7 @@ public sealed class MainViewModel : ObservableObject
     private bool _areDesktopIconsHidden;
     private bool _isDesktopDoubleClickEnabled;
     private bool _drawerStyleEnabled;
+    private bool _rollUpHoverExpandEnabled;
     private string _updateStatusText = string.Empty;
     private bool _isCheckingUpdate;
     private string? _pendingUpdateSha256;
@@ -128,6 +129,7 @@ public sealed class MainViewModel : ObservableObject
         ToggleDesktopDoubleClickCommand = new AsyncRelayCommand(ToggleDesktopDoubleClickAsync);
         ToggleEditorOpacityFollowCommand = new AsyncRelayCommand(ToggleEditorOpacityFollowAsync);
         ToggleDrawerStyleCommand = new AsyncRelayCommand(ToggleDrawerStyleAsync);
+        ToggleRollUpHoverExpandCommand = new AsyncRelayCommand(ToggleRollUpHoverExpandAsync);
         CheckForUpdateCommand = new AsyncRelayCommand(CheckForUpdateAsync);
         ShowDashboardCommand = new RelayCommand(() =>
         {
@@ -226,6 +228,8 @@ public sealed class MainViewModel : ObservableObject
     public IAsyncRelayCommand ToggleEditorOpacityFollowCommand { get; }
 
     public IAsyncRelayCommand ToggleDrawerStyleCommand { get; }
+
+    public IAsyncRelayCommand ToggleRollUpHoverExpandCommand { get; }
 
     public IAsyncRelayCommand ImportMappingFolderCommand { get; }
 
@@ -382,6 +386,12 @@ public sealed class MainViewModel : ObservableObject
         private set => SetProperty(ref _drawerStyleEnabled, value);
     }
 
+    public bool RollUpHoverExpandEnabled
+    {
+        get => _rollUpHoverExpandEnabled;
+        private set => SetProperty(ref _rollUpHoverExpandEnabled, value);
+    }
+
     public string UpdateStatusText
     {
         get => _updateStatusText;
@@ -493,6 +503,11 @@ public sealed class MainViewModel : ObservableObject
             DrawerStyleEnabled =
                 bool.TryParse(drawerStyleSetting, out var drawerStyleEnabled)
                 && drawerStyleEnabled;
+            var rollUpHoverExpandSetting =
+                await _drawerService.GetSettingAsync(DesktopBoxViewModel.RollUpHoverExpandSettingKey);
+            RollUpHoverExpandEnabled =
+                !bool.TryParse(rollUpHoverExpandSetting, out var rollUpHoverExpandEnabled)
+                || rollUpHoverExpandEnabled;
             StatusText = $"{Boxes.Count} 个收纳盒已同步到桌面";
             BoxesChanged?.Invoke(this, EventArgs.Empty);
         });
@@ -1311,6 +1326,27 @@ public sealed class MainViewModel : ObservableObject
             StatusText = exception.Message;
         }
     }
+
+    private async Task ToggleRollUpHoverExpandAsync()
+    {
+        try
+        {
+            var enabled = !RollUpHoverExpandEnabled;
+            await _drawerService.SetSettingAsync(
+                DesktopBoxViewModel.RollUpHoverExpandSettingKey,
+                enabled.ToString());
+            RollUpHoverExpandEnabled = enabled;
+            WeakReferenceMessenger.Default.Send(new RollUpHoverExpandChangedMessage(enabled));
+            StatusText = enabled ? "已开启卷起悬停自动展开" : "已关闭卷起悬停自动展开";
+        }
+        catch (Exception exception)
+        {
+            _logger.Error(exception, "Failed to save roll-up hover-expand setting.");
+            OnPropertyChanged(nameof(RollUpHoverExpandEnabled));
+            StatusText = exception.Message;
+        }
+    }
+
 
     private static bool ReadStartupRegistry()
     {

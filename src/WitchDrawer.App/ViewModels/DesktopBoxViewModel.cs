@@ -40,6 +40,7 @@ public sealed class DesktopBoxViewModel : ObservableObject
     private const string RollUpSettingPrefix = "BoxRolledUp:";
     private const string DrawerSortModeSettingPrefix = "DrawerSortMode:";
     internal const string DrawerStyleSettingKey = "BoxDrawerStyleEnabled";
+    internal const string RollUpHoverExpandSettingKey = "BoxRollUpHoverExpandEnabled";
     private const double DefaultDrawerCoverWidth = 180;
     private const double DefaultDrawerCoverHeight = 112;
     private const double MaximumDrawerCoverDimension = 720;
@@ -80,6 +81,7 @@ public sealed class DesktopBoxViewModel : ObservableObject
     private bool _isTitleVisible = true;
     private bool _isFileNameVisible;
     private bool _isRolledUp;
+    private bool _rollUpHoverExpandEnabled = true;
     private double _drawerCoverWidth = DefaultDrawerCoverWidth;
     private double _drawerCoverHeight = DefaultDrawerCoverHeight;
     private int _drawerCoverColumns = 3;
@@ -107,6 +109,10 @@ public sealed class DesktopBoxViewModel : ObservableObject
         _layoutSettings = layoutSettings ?? new DesktopBoxLayoutSettings(box.Type == BoxType.Drawer);
         _mappingListWidth = _layoutSettings.MappingListWidth;
         _layoutSettings.PropertyChanged += OnLayoutSettingsChanged;
+        WeakReferenceMessenger.Default.Register<DesktopBoxViewModel, RollUpHoverExpandChangedMessage>(
+            this,
+            static (recipient, message) =>
+                recipient.ApplyRollUpHoverExpandEnabled(message.Enabled));
 
         OpenItemCommand = new AsyncRelayCommand<DrawerItemViewModel?>(OpenItemAsync);
         DeleteItemCommand = new AsyncRelayCommand<DrawerItemViewModel?>(DeleteItemAsync);
@@ -255,6 +261,13 @@ public sealed class DesktopBoxViewModel : ObservableObject
     public bool SupportsRollUp => Type is BoxType.Normal or BoxType.Pixel or BoxType.Mapping;
 
     public bool IsRolledUp => SupportsRollUp && _isRolledUp;
+
+    /// <summary>
+    /// Global opt-in: while a box is rolled up, hovering the pointer over it
+    /// temporarily expands it, then re-collapses when the pointer leaves.
+    /// Set from the settings page and kept in sync via <see cref="RollUpHoverExpandChangedMessage"/>.
+    /// </summary>
+    public bool RollUpHoverExpandEnabled => _rollUpHoverExpandEnabled;
 
     public bool IsHeaderTitleVisible => IsTitleVisible || IsRolledUp;
 
@@ -1769,6 +1782,28 @@ public sealed class DesktopBoxViewModel : ObservableObject
             _logger.Error(exception, "Failed to save desktop box roll-up state.");
         }
     }
+
+    /// <summary>
+    /// Loads the global "hover to auto-expand" setting. Defaults to enabled.
+    /// </summary>
+    public async Task LoadRollUpHoverExpandSettingAsync()
+    {
+        var saved = await _drawerService.GetSettingAsync(RollUpHoverExpandSettingKey);
+        ApplyRollUpHoverExpandEnabled(
+            !bool.TryParse(saved, out var enabled) || enabled);
+    }
+
+    internal void ApplyRollUpHoverExpandEnabled(bool enabled)
+    {
+        if (_rollUpHoverExpandEnabled == enabled)
+        {
+            return;
+        }
+
+        _rollUpHoverExpandEnabled = enabled;
+        OnPropertyChanged(nameof(RollUpHoverExpandEnabled));
+    }
+
 
     public async Task LoadFileNameVisibilityAsync()
     {

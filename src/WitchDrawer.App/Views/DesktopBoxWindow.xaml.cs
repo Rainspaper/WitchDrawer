@@ -35,6 +35,7 @@ public partial class DesktopBoxWindow : Window
     private bool _isMappingViewTransitioning;
     private Point? _mappingViewTransitionVisibleOriginPixels;
     private bool _isRollTransitioning;
+    private bool _isRolledUpByHover;
     private bool _restoreAfterMinimizeQueued;
     private bool _desktopOwnershipRestoreQueued;
     private bool _desktopIsForeground;
@@ -91,6 +92,8 @@ public partial class DesktopBoxWindow : Window
         Deactivated += OnWindowDeactivated;
         StateChanged += OnWindowStateChanged;
         PreviewMouseUp += OnWindowPreviewMouseUpForDesktopOwnership;
+        MouseEnter += OnRollUpHoverEnter;
+        MouseLeave += OnRollUpHoverLeave;
         // Desktop boxes often stay non-activated (ShowActivated=false + HWND_BOTTOM/NOACTIVATE).
         // Window.Deactivated therefore never runs after an external drop selection; clear when
         // the whole app loses foreground so a desktop click removes the selected-item chrome.
@@ -1205,8 +1208,23 @@ public partial class DesktopBoxWindow : Window
             return;
         }
 
+        _isRolledUpByHover = false;
+        await SetRolledUpWithAnimationAsync(!ViewModel.IsRolledUp);
+        await ViewModel.SaveRollUpStateAsync();
+    }
+
+    /// <summary>
+    /// Applies a roll-up transition (expanded &lt;-&gt; collapsed) with the size animation.
+    /// Shared by the roll-up toolbar button and the optional hover-to-expand peek behavior.
+    /// </summary>
+    private async Task SetRolledUpWithAnimationAsync(bool rollUp)
+    {
+        if (_isRollTransitioning || _isMappingViewTransitioning || !ViewModel.SupportsRollUp)
+        {
+            return;
+        }
+
         _isRollTransitioning = true;
-        var rollUp = !ViewModel.IsRolledUp;
         try
         {
             var startWidth = ActualWidth;
@@ -1229,7 +1247,6 @@ public partial class DesktopBoxWindow : Window
 
             await AnimateWindowSizeAsync(startWidth, startHeight, startWidth, targetHeight);
             ViewModel.ApplyRollUpState(rollUp);
-            await ViewModel.SaveRollUpStateAsync();
         }
         finally
         {
@@ -1246,6 +1263,30 @@ public partial class DesktopBoxWindow : Window
 
             _isRollTransitioning = false;
             QueueSendToBottom();
+        }
+    }
+
+    private void OnRollUpHoverEnter(object sender, MouseEventArgs e)
+    {
+        if (!_isRolledUpByHover
+            && ViewModel.RollUpHoverExpandEnabled
+            && ViewModel.IsRolledUp
+            && !_isRollTransitioning
+            && !_isMappingViewTransitioning)
+        {
+            _isRolledUpByHover = true;
+            _ = SetRolledUpWithAnimationAsync(rollUp: false);
+        }
+    }
+
+    private void OnRollUpHoverLeave(object sender, MouseEventArgs e)
+    {
+        if (_isRolledUpByHover
+            && !_isRollTransitioning
+            && !_isMappingViewTransitioning)
+        {
+            _isRolledUpByHover = false;
+            _ = SetRolledUpWithAnimationAsync(rollUp: true);
         }
     }
 
