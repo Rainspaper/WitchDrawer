@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
@@ -125,7 +125,7 @@ public sealed class DesktopBoxManager
     private int _refreshVersion;
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
 
-    public async Task RefreshAsync()
+    public async Task RefreshAsync(bool animateNewWindows = true)
     {
         if (_closing)
         {
@@ -205,6 +205,7 @@ public sealed class DesktopBoxManager
                         new BoxItemsChangedEventArgs(viewModel.BoxId));
 
                     window = new DesktopBoxWindow(viewModel);
+                    window.SuppressPopInOnLoad = !animateNewWindows;
                     var requiresOverlapResolution =
                         await PlaceWindowAsync(window, box.Id, index);
 
@@ -703,6 +704,11 @@ public sealed class DesktopBoxManager
     private void OnGlobalMouseButtonDown(int screenX, int screenY)
     {
         if (_closing)
+        {
+            return;
+        }
+
+        if (!_windows.Values.Any(window => window.HasSelection))
         {
             return;
         }

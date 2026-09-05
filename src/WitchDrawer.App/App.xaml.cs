@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.IO.Pipes;
 using System.Text;
 using System.Windows;
@@ -261,6 +261,11 @@ public partial class App : Application
             InitializeTaskbarIcon(paths, logger);
 
             MainWindow = _mainWindow;
+            // 1. 先创建桌面盒（无入场动画），让用户最快看到抽屉
+            await _desktopBoxManager.RefreshAsync(animateNewWindows: false);
+            // 2. 再加载主窗口数据（会触发 BoxesChanged，但桌面盒已存在，只做增量更新）
+            await mainViewModel.LoadAsync();
+            // 3. 最后显示主窗口（非静默），避免主窗口渲染与桌面盒创建同时抢占 GPU/CPU
             if (silentStart)
             {
                 _mainWindow.MinimizeToTray();
@@ -269,9 +274,8 @@ public partial class App : Application
             {
                 _mainWindow.Show();
             }
-            await mainViewModel.LoadAsync();
-            await quickPanelViewModel.LoadAsync();
-            await _desktopBoxManager.RefreshAsync();
+            // QuickPanel 只在用户真正打开时才加载（ToggleAsync 内部会 LoadAsync），
+            // 启动时不再预加载，减少启动期的 I/O 与 CPU 竞争。
             await updateService.ConfirmUpdateStartupAsync();
         }
         catch (Exception exception)

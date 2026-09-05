@@ -1,11 +1,11 @@
-<p align="center">
+﻿<p align="center">
   <img src="https://raw.githubusercontent.com/witchscottishfoldcat/WitchDrawer/main/src/WitchDrawer.App/Assets/app.png" alt="WitchDrawer Logo" width="128" height="128" />
 </p>
 
 <h1 align="center">WitchDrawer</h1>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.3.10-blue" alt="Version" />
+  <img src="https://img.shields.io/badge/version-1.3.15-blue" alt="Version" />
   <img src="https://img.shields.io/badge/license-CC%20BY--NC--SA%204.0-green" alt="License" />
   <img src="https://img.shields.io/badge/.NET-10.0-purple" alt=".NET" />
   <img src="https://img.shields.io/badge/platform-Windows-blue" alt="Platform" />

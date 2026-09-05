@@ -1,4 +1,4 @@
-; WitchDrawer Inno Setup script
+﻿; WitchDrawer Inno Setup script
 ; Build: ISCC.exe WitchDrawer.iss
 ; Produces a Windows installer (-Setup.exe) alongside the portable zip.
 ;
@@ -40,7 +40,7 @@ AppUpdatesURL={#MyAppURL}/releases/latest
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-OutputDir=..\publish
+OutputDir={#PublishDir}
 OutputBaseFilename=WitchDrawer-Setup-v{#MyAppVersion}-x64
 SetupIconFile=..\src\WitchDrawer.App\Assets\app.ico
 Compression=lzma2/ultra64

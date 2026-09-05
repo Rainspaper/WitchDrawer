@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$Version,
     [ValidateSet('Debug', 'Release')]
@@ -22,9 +22,9 @@ if ($Version -notmatch '^\d+\.\d+\.\d+(?:\.\d+)?$') {
 }
 
 $publishDir = Join-Path $repoRoot "publish\v$Version"
-$zipPath = Join-Path $repoRoot "publish\WitchDrawer-v$Version-$RuntimeIdentifier.zip"
+$zipPath = Join-Path $publishDir "WitchDrawer-v$Version-$RuntimeIdentifier.zip"
 $shaPath = "$zipPath.sha256"
-$installerPath = Join-Path $repoRoot "publish\WitchDrawer-Setup-v$Version-x64.exe"
+$installerPath = Join-Path $publishDir "WitchDrawer-Setup-v$Version-x64.exe"
 $installerShaPath = "$installerPath.sha256"
 
 New-Item -ItemType Directory -Path (Split-Path $publishDir) -Force | Out-Null
@@ -32,13 +32,7 @@ if (Test-Path -LiteralPath $publishDir) {
     Get-ChildItem -LiteralPath $publishDir -Force | Remove-Item -Recurse -Force
 }
 
-dotnet publish $projectPath `
-    --configuration $Configuration `
-    --runtime $RuntimeIdentifier `
-    --self-contained true `
-    -p:PublishSingleFile=true `
-    -p:IncludeNativeLibrariesForSelfExtract=true `
-    --output $publishDir
+dotnet publish $projectPath --configuration $Configuration --runtime $RuntimeIdentifier --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true --output $publishDir
 if ($LASTEXITCODE -ne 0) {
     throw "dotnet publish failed with exit code $LASTEXITCODE."
 }

@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -48,6 +48,7 @@ public partial class DesktopBoxWindow : Window
     private NativePoint _mappingListResizeStartCursor;
     private bool _suppressDrawerItemClick;
     private bool _isBoxOpacityRefreshQueued;
+    private bool _suppressPopInOnLoad;
     private bool _isVisibleBoundsClampingEnabled;
 
     internal sealed class DesktopBoxDragPayload(Guid dragId, Guid itemId, Guid sourceBoxId)
@@ -195,6 +196,16 @@ public partial class DesktopBoxWindow : Window
     public nint NativeHandle => _nativeWindow?.Handle ?? nint.Zero;
 
     public bool IsNativeWindowAlive => _nativeWindow?.IsAlive == true;
+
+    /// <summary>
+    /// When true, OnLoaded skips the entrance fade/scale animation.
+    /// Used during the initial startup refresh so a batch of boxes does not all animate at once.
+    /// </summary>
+    internal bool SuppressPopInOnLoad
+    {
+        get => _suppressPopInOnLoad;
+        set => _suppressPopInOnLoad = value;
+    }
 
     public bool RefreshDesktopHost()
     {
@@ -1059,7 +1070,19 @@ public partial class DesktopBoxWindow : Window
         ResetDragVisualState();
         ClearPendingIconDrag();
         ApplyThemeAppearance();
-        WindowMotion.PopIn(this, 0.97, 140);
+        if (!_suppressPopInOnLoad)
+        {
+            WindowMotion.PopIn(this, 0.97, 140);
+        }
+        else
+        {
+            Opacity = 1;
+            if (RenderTransform is ScaleTransform scale)
+            {
+                scale.ScaleX = 1;
+                scale.ScaleY = 1;
+            }
+        }
         if (ViewModel.IsTodoBox)
         {
             TodoTitleTextBox.Focus();
@@ -1126,6 +1149,16 @@ public partial class DesktopBoxWindow : Window
         ClearItemSelection();
         ResetDragVisualState();
     }
+
+    /// <summary>
+    /// True when any item is selected in this box. Used to skip the per-click
+    /// outside-click clearing loop when nothing is selected, keeping the global
+    /// mouse hook cheap while the app idles.
+    /// </summary>
+    internal bool HasSelection =>
+        IconList.SelectedItem is not null
+        || FileList.SelectedItem is not null
+        || ViewModel.DrawerCoverTiles.Any(tile => tile.IsSelected);
 
     /// <summary>
     /// 全局鼠标钩子发现点击落在本盒子之外（桌面/其他程序/其他盒子）时调用。
