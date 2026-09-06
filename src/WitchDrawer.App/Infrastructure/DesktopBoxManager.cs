@@ -1547,7 +1547,7 @@ public sealed class DesktopBoxManager
         _isAdjustingPosition = true;
         try
         {
-            PerformHeightResizeAlignment(resizedWindow);
+            PerformHeightResizeAlignment(resizedWindow, applySnap: true);
         }
         finally
         {
@@ -1555,10 +1555,11 @@ public sealed class DesktopBoxManager
         }
     }
 
-    private void PerformHeightResizeAlignment(DesktopBoxWindow resizedWindow)
+    private void PerformHeightResizeAlignment(DesktopBoxWindow resizedWindow, bool applySnap = false)
     {
         var dpi = resizedWindow.GetDpiScale();
         var snapThreshold = 10.0 * dpi.DpiScaleX;
+        var heightSnapThreshold = 10.0;
 
         var boundsA = resizedWindow.GetVisibleBoundsPixels();
         if (boundsA.IsEmpty)
@@ -1572,6 +1573,10 @@ public sealed class DesktopBoxManager
         double currentLeft = boundsA.Left;
         double currentRight = boundsA.Right;
 
+        var currentHeight = GetBoxHeight(resizedWindow);
+        double? snappedHeight = null;
+        double? snappedHeightDiff = null;
+
         var horizontalGuideYs = new List<double>();
         double horizontalGuideXMin = double.MaxValue;
         double horizontalGuideXMax = double.MinValue;
@@ -1582,6 +1587,24 @@ public sealed class DesktopBoxManager
             if (otherWindow == resizedWindow || !otherWindow.IsVisible)
             {
                 continue;
+            }
+
+            // Only snap between boxes in the same visual mode so DrawerCoverHeight
+            // and MappingListHeight are compared with compatible units/meaning.
+            if (currentHeight.HasValue
+                && resizedWindow.ViewModel.IsMappingListMode == otherWindow.ViewModel.IsMappingListMode)
+            {
+                var otherHeight = GetBoxHeight(otherWindow);
+                if (otherHeight.HasValue)
+                {
+                    var diff = Math.Abs(currentHeight.Value - otherHeight.Value);
+                    if (diff <= heightSnapThreshold
+                        && (!snappedHeightDiff.HasValue || diff < snappedHeightDiff.Value))
+                    {
+                        snappedHeight = otherHeight;
+                        snappedHeightDiff = diff;
+                    }
+                }
             }
 
             var boundsB = otherWindow.GetVisibleBoundsPixels();
@@ -1616,6 +1639,20 @@ public sealed class DesktopBoxManager
             }
         }
 
+        if (applySnap && snappedHeight.HasValue)
+        {
+            if (resizedWindow.ViewModel.IsMappingListMode)
+            {
+                resizedWindow.ViewModel.ResizeMappingListHeight(snappedHeight.Value);
+            }
+            else
+            {
+                resizedWindow.ViewModel.ResizeDrawerCover(
+                    resizedWindow.ViewModel.DrawerCoverWidth,
+                    snappedHeight.Value);
+            }
+        }
+
         if (horizontalGuideYs.Count > 0 && horizontalGuideXMax > horizontalGuideXMin)
         {
             ShowHorizontalGuide(horizontalGuideYs, horizontalGuideXMin, horizontalGuideXMax - horizontalGuideXMin);
@@ -1624,6 +1661,18 @@ public sealed class DesktopBoxManager
         {
             HideHorizontalGuide();
         }
+    }
+
+    private static double? GetBoxHeight(DesktopBoxWindow window)
+    {
+        var viewModel = window.ViewModel;
+        if (viewModel.IsMappingListMode)
+        {
+            var height = viewModel.MappingListHeight;
+            return double.IsNaN(height) ? null : height;
+        }
+
+        return viewModel.DrawerCoverHeight;
     }
 
     private void OnWindowMouseUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
