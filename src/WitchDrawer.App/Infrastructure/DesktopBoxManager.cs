@@ -157,6 +157,7 @@ public sealed class DesktopBoxManager
             {
                 var win = _windows[removedId];
                 win.LocationChanged -= OnWindowLocationChanged;
+                win.SizeChanged -= OnWindowSizeChanged;
                 win.PreviewMouseLeftButtonUp -= OnWindowMouseUp;
                 win.ForceClose();
                 _windows.Remove(removedId);
@@ -213,6 +214,7 @@ public sealed class DesktopBoxManager
                     _windows.Add(box.Id, window);
 
                     window.LocationChanged += OnWindowLocationChanged;
+                    window.SizeChanged += OnWindowSizeChanged;
                     window.PreviewMouseLeftButtonUp += OnWindowMouseUp;
                     window.SetPositionChangedCallback(async (id) =>
                     {
@@ -484,6 +486,7 @@ public sealed class DesktopBoxManager
             }
 
             window.LocationChanged -= OnWindowLocationChanged;
+            window.SizeChanged -= OnWindowSizeChanged;
             window.PreviewMouseLeftButtonUp -= OnWindowMouseUp;
             // 外部（Explorer 重建桌面）销毁 HWND 不会触发 WPF Closed，必须显式 ForceClose
             // 让 OnClosed 里的退订/清理执行，否则整棵窗口对象图被静态事件永久引用（僵尸泄漏）。
@@ -665,6 +668,7 @@ public sealed class DesktopBoxManager
         foreach (var window in _windows.Values)
         {
             window.LocationChanged -= OnWindowLocationChanged;
+            window.SizeChanged -= OnWindowSizeChanged;
             window.PreviewMouseLeftButtonUp -= OnWindowMouseUp;
             window.ForceClose();
         }
@@ -1514,6 +1518,111 @@ public sealed class DesktopBoxManager
         finally
         {
             _isAdjustingPosition = false;
+        }
+    }
+
+    private void OnWindowSizeChanged(object? sender, SizeChangedEventArgs e)
+    {
+        if (_isAdjustingPosition || _closing)
+        {
+            return;
+        }
+
+        if (sender is not DesktopBoxWindow resizedWindow)
+        {
+            return;
+        }
+
+        if (!e.HeightChanged)
+        {
+            return;
+        }
+
+        if (System.Windows.Input.Mouse.LeftButton != System.Windows.Input.MouseButtonState.Pressed)
+        {
+            HideGuides();
+            return;
+        }
+
+        _isAdjustingPosition = true;
+        try
+        {
+            PerformHeightResizeAlignment(resizedWindow);
+        }
+        finally
+        {
+            _isAdjustingPosition = false;
+        }
+    }
+
+    private void PerformHeightResizeAlignment(DesktopBoxWindow resizedWindow)
+    {
+        var dpi = resizedWindow.GetDpiScale();
+        var snapThreshold = 10.0 * dpi.DpiScaleX;
+
+        var boundsA = resizedWindow.GetVisibleBoundsPixels();
+        if (boundsA.IsEmpty)
+        {
+            HideHorizontalGuide();
+            return;
+        }
+
+        double currentTop = boundsA.Top;
+        double currentBottom = boundsA.Bottom;
+        double currentLeft = boundsA.Left;
+        double currentRight = boundsA.Right;
+
+        var horizontalGuideYs = new List<double>();
+        double horizontalGuideXMin = double.MaxValue;
+        double horizontalGuideXMax = double.MinValue;
+
+        foreach (var pair in _windows)
+        {
+            var otherWindow = pair.Value;
+            if (otherWindow == resizedWindow || !otherWindow.IsVisible)
+            {
+                continue;
+            }
+
+            var boundsB = otherWindow.GetVisibleBoundsPixels();
+            if (boundsB.IsEmpty)
+            {
+                continue;
+            }
+
+            double topB = boundsB.Top;
+            double bottomB = boundsB.Bottom;
+            double heightB = boundsB.Height;
+            double leftB = boundsB.Left;
+            double rightB = boundsB.Right;
+
+            // Align with another box's equal height.
+            var equalHeightBottom = currentTop + heightB;
+            if (Math.Abs(currentBottom - equalHeightBottom) <= snapThreshold)
+            {
+                AddHorizontalGuide(horizontalGuideYs, ref horizontalGuideXMin, ref horizontalGuideXMax, equalHeightBottom, currentLeft, leftB, currentRight, rightB);
+            }
+
+            // Align bottom edge with another box's bottom edge.
+            if (Math.Abs(currentBottom - bottomB) <= snapThreshold)
+            {
+                AddHorizontalGuide(horizontalGuideYs, ref horizontalGuideXMin, ref horizontalGuideXMax, bottomB, currentLeft, leftB, currentRight, rightB);
+            }
+
+            // Align bottom edge with another box's top edge.
+            if (Math.Abs(currentBottom - topB) <= snapThreshold)
+            {
+                AddHorizontalGuide(horizontalGuideYs, ref horizontalGuideXMin, ref horizontalGuideXMax, topB, currentLeft, leftB, currentRight, rightB);
+            }
+        }
+
+        if (horizontalGuideYs.Count > 0 && horizontalGuideXMax > horizontalGuideXMin)
+        {
+            ShowHorizontalGuide(horizontalGuideYs, horizontalGuideXMin, horizontalGuideXMax - horizontalGuideXMin);
+        }
+        else
+        {
+            HideHorizontalGuide();
         }
     }
 
