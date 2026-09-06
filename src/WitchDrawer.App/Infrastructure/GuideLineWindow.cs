@@ -1,3 +1,4 @@
+﻿using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
@@ -14,7 +15,8 @@ public sealed class GuideLineWindow : Window
     private const uint SetWindowPosNoActivate = 0x0010;
 
     private readonly bool _isVertical;
-    private readonly Line _line;
+    private readonly Canvas _canvas;
+    private readonly List<Line> _lines = [];
     private HwndSource? _source;
 
     public GuideLineWindow(bool isVertical)
@@ -32,24 +34,31 @@ public sealed class GuideLineWindow : Window
         Width = OverlayThickness;
         Height = OverlayThickness;
 
-        _line = new Line
-        {
-            StrokeThickness = 1.5,
-            StrokeDashArray = new DoubleCollection(new double[] { 4, 3 }),
-            SnapsToDevicePixels = true
-        };
-
-        // Dynamically reference active AccentBrush theme resource
-        _line.SetResourceReference(Shape.StrokeProperty, "AccentBrush");
-
-        var canvas = new Canvas();
-        canvas.Children.Add(_line);
-        Content = canvas;
+        _canvas = new Canvas();
+        Content = _canvas;
     }
 
     public void UpdateLine(double x1, double y1, double x2, double y2)
     {
-        var bounds = CalculateOverlayBounds(_isVertical, x1, y1, x2, y2);
+        UpdateLines([(x1, y1, x2, y2)]);
+    }
+
+    public void UpdateLines(IReadOnlyList<(double X1, double Y1, double X2, double Y2)> segments)
+    {
+        if (segments.Count == 0)
+        {
+            Hide();
+            return;
+        }
+
+        var bounds = CalculateOverlayBounds(_isVertical, segments[0].X1, segments[0].Y1, segments[0].X2, segments[0].Y2);
+        for (var i = 1; i < segments.Count; i++)
+        {
+            var segment = segments[i];
+            var segmentBounds = CalculateOverlayBounds(_isVertical, segment.X1, segment.Y1, segment.X2, segment.Y2);
+            bounds.Union(segmentBounds);
+        }
+
         var handle = new WindowInteropHelper(this).EnsureHandle();
         SetWindowPos(
             handle,
@@ -60,27 +69,43 @@ public sealed class GuideLineWindow : Window
             Math.Max(1, ToNativeCoordinate(bounds.Height)),
             SetWindowPosNoActivate);
 
-        // The HWND uses virtual-desktop physical pixels. Line geometry remains
-        // local WPF content, so convert only the local lengths back to DIPs.
         var dpi = VisualTreeHelper.GetDpi(this);
         var widthDip = bounds.Width / dpi.DpiScaleX;
         var heightDip = bounds.Height / dpi.DpiScaleY;
         Width = widthDip;
         Height = heightDip;
 
-        if (_isVertical)
-        {
-            _line.X1 = widthDip / 2;
-            _line.X2 = widthDip / 2;
-            _line.Y1 = y1 <= y2 ? 0 : heightDip;
-            _line.Y2 = y1 <= y2 ? heightDip : 0;
-            return;
-        }
+        _canvas.Children.Clear();
+        _lines.Clear();
 
-        _line.X1 = x1 <= x2 ? 0 : widthDip;
-        _line.X2 = x1 <= x2 ? widthDip : 0;
-        _line.Y1 = heightDip / 2;
-        _line.Y2 = heightDip / 2;
+        foreach (var segment in segments)
+        {
+            var line = new Line
+            {
+                StrokeThickness = 1.5,
+                StrokeDashArray = new DoubleCollection(new double[] { 4, 3 }),
+                SnapsToDevicePixels = true
+            };
+            line.SetResourceReference(Shape.StrokeProperty, "AccentBrush");
+
+            if (_isVertical)
+            {
+                line.X1 = (segment.X1 - bounds.Left) / dpi.DpiScaleX;
+                line.X2 = (segment.X2 - bounds.Left) / dpi.DpiScaleX;
+                line.Y1 = (Math.Min(segment.Y1, segment.Y2) - bounds.Top) / dpi.DpiScaleY;
+                line.Y2 = (Math.Max(segment.Y1, segment.Y2) - bounds.Top) / dpi.DpiScaleY;
+            }
+            else
+            {
+                line.X1 = (Math.Min(segment.X1, segment.X2) - bounds.Left) / dpi.DpiScaleX;
+                line.X2 = (Math.Max(segment.X1, segment.X2) - bounds.Left) / dpi.DpiScaleX;
+                line.Y1 = (segment.Y1 - bounds.Top) / dpi.DpiScaleY;
+                line.Y2 = (segment.Y2 - bounds.Top) / dpi.DpiScaleY;
+            }
+
+            _lines.Add(line);
+            _canvas.Children.Add(line);
+        }
     }
 
     internal static Rect CalculateOverlayBounds(
