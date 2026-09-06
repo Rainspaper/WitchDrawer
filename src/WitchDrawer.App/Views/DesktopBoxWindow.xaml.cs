@@ -1247,6 +1247,14 @@ public partial class DesktopBoxWindow : Window
             return;
         }
 
+        // If currently hover-expanded, pin to expanded instead of collapsing again.
+        if (_isRolledUpByHover)
+        {
+            _isRolledUpByHover = false;
+            await ViewModel.SaveRollUpStateAsync();
+            return;
+        }
+
         _isRolledUpByHover = false;
         await SetRolledUpWithAnimationAsync(!ViewModel.IsRolledUp);
         await ViewModel.SaveRollUpStateAsync();
