@@ -230,7 +230,15 @@ public sealed partial class DesktopBoxLayoutSettings : ObservableObject
 
     public double MappingListMinHeight => Math.Round(58 * MappingListScale, 1);
 
-    public double MappingListMaxHeight => Math.Round(294 * MappingListScale, 1);
+    public double MappingListMaxHeight
+    {
+        get
+        {
+            var presetMax = 294 * MappingListScale;
+            var workAreaMax = SystemParameters.WorkArea.Height - 80;
+            return Math.Round(Math.Max(presetMax, workAreaMax), 1);
+        }
+    }
 
     public double MappingListIconSize => Math.Round(14 * MappingListScale, 1);
 
