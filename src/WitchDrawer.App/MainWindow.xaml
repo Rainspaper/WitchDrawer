@@ -276,7 +276,7 @@
                                      Margin="0,0,0,6">
                                 <ListBox.Resources>
                                     <Style TargetType="{x:Type ScrollBar}"
-                                           BasedOn="{StaticResource DrawerScrollBarStyle}" />
+                                           BasedOn="{StaticResource SlimListScrollBarStyle}" />
                                     <Style x:Key="SidebarBoxIconPathStyle"
                                            TargetType="{x:Type Path}">
                                         <Setter Property="Stroke" Value="{DynamicResource AccentBrush}" />

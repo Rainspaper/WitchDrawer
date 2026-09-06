@@ -1,4 +1,4 @@
-<Window x:Class="WitchDrawer.App.Views.DesktopBoxWindow"
+﻿<Window x:Class="WitchDrawer.App.Views.DesktopBoxWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:WitchDrawer.App.Controls"
@@ -463,6 +463,10 @@
                      MouseMove="OnIconMouseMove"
                      MouseDoubleClick="OnItemsMouseDoubleClick"
                      PreviewMouseRightButtonUp="OnIconPreviewMouseRightButtonUp">
+                <ListBox.Resources>
+                    <Style TargetType="{x:Type ScrollBar}"
+                           BasedOn="{StaticResource SlimListScrollBarStyle}" />
+                </ListBox.Resources>
                 <ListBox.Style>
                     <Style TargetType="{x:Type ListBox}" BasedOn="{StaticResource {x:Type ListBox}}">
                         <Setter Property="Visibility" Value="Collapsed" />
