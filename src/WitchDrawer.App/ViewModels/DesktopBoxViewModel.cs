@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Globalization;
 using System.IO;
@@ -31,6 +31,7 @@ public sealed class DesktopBoxViewModel : ObservableObject
     private const double HiddenGridContentInset = 6;
     private const string MappingViewModeSettingPrefix = "MappingViewMode:";
     private const string MappingListWidthSettingPrefix = "MappingListWidth:";
+    private const string MappingListHeightSettingPrefix = "MappingListHeight:";
     private const string MappingListViewMode = "List";
     private const string MappingGridViewMode = "Grid";
     private const string DrawerCoverSizeSettingPrefix = "DrawerCoverSize:";
@@ -73,6 +74,8 @@ public sealed class DesktopBoxViewModel : ObservableObject
     private bool _isMappingListMode;
     private double _mappingListWidth;
     private bool _hasCustomMappingListWidth;
+    private double _mappingListHeight = double.NaN;
+    private bool _hasCustomMappingListHeight;
     private string _newTodoTitle = string.Empty;
     private double _iconDpiScaleX = 1;
     private double _iconDpiScaleY = 1;
@@ -129,6 +132,7 @@ public sealed class DesktopBoxViewModel : ObservableObject
     public DesktopBoxLayoutSettings LayoutSettings => _layoutSettings;
 
     public double MappingListWidth => _mappingListWidth;
+    public double MappingListHeight => _mappingListHeight;
 
     /// <summary>供窗口层包装 fire-and-forget 任务时记录异常。</summary>
     internal IAppLogger Logger => _logger;
@@ -1271,6 +1275,83 @@ public sealed class DesktopBoxViewModel : ObservableObject
         var candidate = double.IsFinite(width) ? width : fallback;
         return Math.Clamp(candidate, MinimumMappingListWidth, MaximumMappingListWidth);
     }
+    public void ResizeMappingListHeight(double height)
+    {
+        if (!IsMappingBox)
+        {
+            return;
+        }
+
+        _hasCustomMappingListHeight = true;
+        SetProperty(
+            ref _mappingListHeight,
+            NormalizeMappingListHeight(height),
+            nameof(MappingListHeight));
+    }
+
+    public async Task LoadMappingListHeightAsync()
+    {
+        if (!IsMappingBox)
+        {
+            return;
+        }
+
+        try
+        {
+            var saved = await _drawerService.GetSettingAsync(GetMappingListHeightSettingKey(BoxId));
+            if (double.TryParse(saved, NumberStyles.Float, CultureInfo.InvariantCulture, out var height)
+                && double.IsFinite(height))
+            {
+                _hasCustomMappingListHeight = true;
+                SetProperty(
+                    ref _mappingListHeight,
+                    NormalizeMappingListHeight(height),
+                    nameof(MappingListHeight));
+            }
+            else
+            {
+                _hasCustomMappingListHeight = false;
+                SetProperty(ref _mappingListHeight, double.NaN, nameof(MappingListHeight));
+            }
+        }
+        catch (Exception exception)
+        {
+            _logger.Error(exception, "Failed to load mapping list height.");
+        }
+    }
+
+    public async Task SaveMappingListHeightAsync()
+    {
+        if (!IsMappingBox)
+        {
+            return;
+        }
+
+        try
+        {
+            await _drawerService.SetSettingAsync(
+                GetMappingListHeightSettingKey(BoxId),
+                MappingListHeight.ToString("R", CultureInfo.InvariantCulture));
+        }
+        catch (Exception exception)
+        {
+            _logger.Error(exception, "Failed to save mapping list height.");
+        }
+    }
+
+    internal static string GetMappingListHeightSettingKey(Guid boxId) =>
+        MappingListHeightSettingPrefix + boxId.ToString("N");
+
+    private double NormalizeMappingListHeight(double height)
+    {
+        var candidate = double.IsFinite(height)
+            ? height
+            : LayoutSettings.MappingListMaxHeight;
+        return Math.Clamp(
+            candidate,
+            LayoutSettings.MappingListMinHeight,
+            LayoutSettings.MappingListMaxHeight);
+    }
 
     private async Task OpenItemAsync(DrawerItemViewModel? item)
     {
@@ -2107,6 +2188,16 @@ public sealed class DesktopBoxViewModel : ObservableObject
                 ref _mappingListWidth,
                 LayoutSettings.MappingListWidth,
                 nameof(MappingListWidth));
+        }
+        if ((e.PropertyName is nameof(DesktopBoxLayoutSettings.MappingListMinHeight)
+                or nameof(DesktopBoxLayoutSettings.MappingListMaxHeight))
+            && _hasCustomMappingListHeight
+            && !double.IsNaN(_mappingListHeight))
+        {
+            SetProperty(
+                ref _mappingListHeight,
+                NormalizeMappingListHeight(_mappingListHeight),
+                nameof(MappingListHeight));
         }
 
         if (e.PropertyName is nameof(DesktopBoxLayoutSettings.DrawerCoverCellWidth)

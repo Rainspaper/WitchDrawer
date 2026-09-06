@@ -47,6 +47,8 @@ public partial class DesktopBoxWindow : Window
     private NativePoint _drawerResizeStartCursor;
     private double _mappingListResizeStartWidth;
     private NativePoint _mappingListResizeStartCursor;
+    private double _mappingListResizeStartHeight;
+    private NativePoint _mappingListResizeStartHeightCursor;
     private bool _suppressDrawerItemClick;
     private bool _isBoxOpacityRefreshQueued;
     private bool _suppressPopInOnLoad;
@@ -749,6 +751,43 @@ public partial class DesktopBoxWindow : Window
         }
 
         await ViewModel.SaveMappingListWidthAsync();
+        e.Handled = true;
+    }
+    private void OnMappingListResizeHeightStarted(object sender, DragStartedEventArgs e)
+    {
+        _mappingListResizeStartHeight =
+            double.IsNaN(ViewModel.MappingListHeight)
+                ? FileList.ActualHeight
+                : ViewModel.MappingListHeight;
+        GetCursorPos(out _mappingListResizeStartHeightCursor);
+        e.Handled = true;
+    }
+
+    private void OnMappingListResizeHeightDelta(object sender, DragDeltaEventArgs e)
+    {
+        if (!GetCursorPos(out var currentCursor))
+        {
+            return;
+        }
+
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var verticalDelta = currentCursor.Y - _mappingListResizeStartHeightCursor.Y;
+        ViewModel.ResizeMappingListHeight(
+            _mappingListResizeStartHeight
+            + (verticalDelta / Math.Max(0.1, dpi.DpiScaleY)));
+        e.Handled = true;
+    }
+
+    private async void OnMappingListResizeHeightCompleted(object sender, DragCompletedEventArgs e)
+    {
+        if (e.Canceled)
+        {
+            ViewModel.ResizeMappingListHeight(_mappingListResizeStartHeight);
+            e.Handled = true;
+            return;
+        }
+
+        await ViewModel.SaveMappingListHeightAsync();
         e.Handled = true;
     }
 

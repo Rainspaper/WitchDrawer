@@ -443,6 +443,7 @@
                       Width="{Binding MappingListWidth}"
                       MinHeight="{Binding LayoutSettings.MappingListMinHeight}"
                       MaxHeight="{Binding LayoutSettings.MappingListMaxHeight}"
+                      Height="{Binding MappingListHeight, Mode=OneWay}"
                       Margin="{Binding LayoutSettings.MappingListMargin}"
                       Padding="{Binding LayoutSettings.MappingListPadding}"
                      HorizontalAlignment="Left"
@@ -578,6 +579,24 @@
                    DragStarted="OnMappingListResizeStarted"
                    DragDelta="OnMappingListResizeDelta"
                    DragCompleted="OnMappingListResizeCompleted">
+                <Thumb.Template>
+                    <ControlTemplate TargetType="{x:Type Thumb}">
+                        <Grid Background="Transparent" />
+                    </ControlTemplate>
+                </Thumb.Template>
+            </Thumb>
+            <Thumb x:Name="MappingListResizeHeightThumb"
+                   Grid.RowSpan="2"
+                   Panel.ZIndex="12"
+                   Height="10"
+                   Margin="-1,0,5,0"
+                   HorizontalAlignment="Stretch"
+                   VerticalAlignment="Bottom"
+                   Cursor="SizeNS"
+                   Visibility="{Binding IsMappingListMode, Converter={StaticResource BooleanToVisibilityConverter}}"
+                   DragStarted="OnMappingListResizeHeightStarted"
+                   DragDelta="OnMappingListResizeHeightDelta"
+                   DragCompleted="OnMappingListResizeHeightCompleted">
                 <Thumb.Template>
                     <ControlTemplate TargetType="{x:Type Thumb}">
                         <Grid Background="Transparent" />
