@@ -23,6 +23,7 @@ public sealed class MainViewModel : ObservableObject
     internal const string ThemeBoxOpacityMigrationVersionSettingKey = "ThemeBoxOpacityVersion";
     private const string ThemeBoxOpacityMigrationVersion = "2";
     internal const string EditorFollowsBoxOpacitySettingKey = "EditorFollowsBoxOpacity";
+    internal const string BoxCornerRadiusSettingKey = "BoxCornerRadius";
     internal const string DesktopDoubleClickSettingKey = "DesktopDoubleClickToggle";
     internal const string AboutPageShownSettingKey = "AboutPageShown";
     private const string StartupRegistryKeyName = "WitchDrawer";
@@ -59,6 +60,9 @@ public sealed class MainViewModel : ObservableObject
     private bool _isDesktopDoubleClickEnabled;
     private bool _drawerStyleEnabled;
     private bool _rollUpHoverExpandEnabled;
+    private double _boxCornerRadius = BoxAppearanceSettings.DefaultCornerRadius;
+    private readonly object _boxCornerRadiusSaveLock = new();
+    private CancellationTokenSource? _boxCornerRadiusSaveDelay;
     private string _updateStatusText = string.Empty;
     private bool _isCheckingUpdate;
     private string? _pendingUpdateSha256;
@@ -392,6 +396,12 @@ public sealed class MainViewModel : ObservableObject
         private set => SetProperty(ref _rollUpHoverExpandEnabled, value);
     }
 
+    public double BoxCornerRadius
+    {
+        get => _boxCornerRadius;
+        set => ApplyBoxCornerRadius(value, save: true);
+    }
+
     public string UpdateStatusText
     {
         get => _updateStatusText;
@@ -508,6 +518,16 @@ public sealed class MainViewModel : ObservableObject
             RollUpHoverExpandEnabled =
                 !bool.TryParse(rollUpHoverExpandSetting, out var rollUpHoverExpandEnabled)
                 || rollUpHoverExpandEnabled;
+            var boxCornerRadiusSetting =
+                await _drawerService.GetSettingAsync(BoxCornerRadiusSettingKey);
+            if (double.TryParse(
+                boxCornerRadiusSetting,
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out var savedBoxCornerRadius))
+            {
+                ApplyBoxCornerRadius(savedBoxCornerRadius, save: false);
+            }
             StatusText = $"{Boxes.Count} 个收纳盒已同步到桌面";
             BoxesChanged?.Invoke(this, EventArgs.Empty);
         });
@@ -1344,6 +1364,75 @@ public sealed class MainViewModel : ObservableObject
             _logger.Error(exception, "Failed to save roll-up hover-expand setting.");
             OnPropertyChanged(nameof(RollUpHoverExpandEnabled));
             StatusText = exception.Message;
+        }
+    }
+
+    private void ApplyBoxCornerRadius(double value, bool save)
+    {
+        if (!double.IsFinite(value))
+        {
+            return;
+        }
+
+        var normalized = Math.Clamp(
+            Math.Round(value),
+            BoxAppearanceSettings.MinCornerRadius,
+            BoxAppearanceSettings.MaxCornerRadius);
+        if (SetProperty(ref _boxCornerRadius, normalized))
+        {
+            BoxAppearanceSettings.CornerRadius = normalized;
+            WeakReferenceMessenger.Default.Send(new BoxCornerRadiusChangedMessage(normalized));
+            if (save)
+            {
+                QueueBoxCornerRadiusSave(normalized);
+            }
+        }
+    }
+
+    private void QueueBoxCornerRadiusSave(double value)
+    {
+        CancellationTokenSource delay;
+        lock (_boxCornerRadiusSaveLock)
+        {
+            _boxCornerRadiusSaveDelay?.Cancel();
+            delay = new CancellationTokenSource();
+            _boxCornerRadiusSaveDelay = delay;
+        }
+
+        _ = PersistBoxCornerRadiusAfterDelayAsync(value, delay);
+    }
+
+    private async Task PersistBoxCornerRadiusAfterDelayAsync(
+        double value,
+        CancellationTokenSource delay)
+    {
+        try
+        {
+            await Task.Delay(250, delay.Token);
+            await _drawerService.SetSettingAsync(
+                BoxCornerRadiusSettingKey,
+                value.ToString("R", CultureInfo.InvariantCulture),
+                delay.Token);
+        }
+        catch (OperationCanceledException) when (delay.IsCancellationRequested)
+        {
+            // Slider drags only persist the final value.
+        }
+        catch (Exception exception)
+        {
+            _logger.Error(exception, "Failed to persist box corner radius.");
+        }
+        finally
+        {
+            lock (_boxCornerRadiusSaveLock)
+            {
+                if (ReferenceEquals(_boxCornerRadiusSaveDelay, delay))
+                {
+                    _boxCornerRadiusSaveDelay = null;
+                }
+            }
+
+            delay.Dispose();
         }
     }
 

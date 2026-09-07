@@ -8,10 +8,12 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
+using CommunityToolkit.Mvvm.Messaging;
 using WitchDrawer.App.Controls;
 using WitchDrawer.App.Features.DesktopItems;
 using WitchDrawer.App.Features.ItemContextMenu;
 using WitchDrawer.App.Infrastructure;
+using WitchDrawer.App.Messages;
 using WitchDrawer.App.ViewModels;
 using WitchDrawer.Native.Windows;
 
@@ -84,6 +86,14 @@ public partial class DesktopBoxWindow : Window
         _itemContextMenu = new DrawerItemContextMenuCoordinator(viewModel);
         DataContext = viewModel;
         InitializeComponent();
+        WindowBorder.CornerRadius = new CornerRadius(BoxAppearanceSettings.CornerRadius);
+        WeakReferenceMessenger.Default.Register<BoxCornerRadiusChangedMessage>(this, static (recipient, message) =>
+        {
+            if (recipient is DesktopBoxWindow window)
+            {
+                window.WindowBorder.CornerRadius = new CornerRadius(message.CornerRadius);
+            }
+        });
         SourceInitialized += OnSourceInitialized;
         Loaded += OnLoaded;
         DpiChanged += OnDpiChanged;
@@ -966,6 +976,7 @@ public partial class DesktopBoxWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        WeakReferenceMessenger.Default.Unregister<BoxCornerRadiusChangedMessage>(this);
         SourceInitialized -= OnSourceInitialized;
         Loaded -= OnLoaded;
         DpiChanged -= OnDpiChanged;
