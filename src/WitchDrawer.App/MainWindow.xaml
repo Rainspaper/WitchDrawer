@@ -2523,19 +2523,6 @@
                                             </Setter.Value>
                                         </Setter>
                                     </Style>
-                                </ScrollViewer.Resources>
-                            <StackPanel Margin="0,0,4,0"
-                                        HorizontalAlignment="Stretch"
-                                        VerticalAlignment="Top">
-                                <!-- Theme Settings Card -->
-                                <Border Background="{DynamicResource PanelBrush}"
-                                    BorderBrush="{DynamicResource BorderBrushSoft}"
-                                    BorderThickness="1"
-                                    CornerRadius="12"
-                                    Padding="10"
-                                    Margin="0,0,0,6">
-                                <Grid>
-                                    <Grid.Resources>
                                         <Style x:Key="ThemeOpacityTrackButtonStyle"
                                                TargetType="{x:Type RepeatButton}">
                                             <Setter Property="Focusable" Value="False" />
@@ -2623,7 +2610,18 @@
                                                 </Setter.Value>
                                             </Setter>
                                         </Style>
-                                    </Grid.Resources>
+                                </ScrollViewer.Resources>
+                            <StackPanel Margin="0,0,4,0"
+                                        HorizontalAlignment="Stretch"
+                                        VerticalAlignment="Top">
+                                <!-- Theme Settings Card -->
+                                <Border Background="{DynamicResource PanelBrush}"
+                                    BorderBrush="{DynamicResource BorderBrushSoft}"
+                                    BorderThickness="1"
+                                    CornerRadius="12"
+                                    Padding="10"
+                                    Margin="0,0,0,6">
+                                <Grid>
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
