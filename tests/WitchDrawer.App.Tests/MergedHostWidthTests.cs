@@ -27,13 +27,26 @@ public sealed class MergedHostWidthTests
             DesktopBoxViewModel.CalculateHostBoxWidth(storedWidth, contentFloorWidth));
     }
 
-    [Fact]
-    public void CalculateHostBoxWidth_OnlyGrowsWithTheContentFloor()
+    [Theory]
+    // 列表模式：宽度完全听用户的，不用网格内容兜底（回归：列表模式曾被强制撑到上限、拖不动）。
+    [InlineData(true, false, 900, 0)]
+    // 用户拖拽过宽度：内容再宽也不再撑宽盒子。
+    [InlineData(false, true, 900, 0)]
+    // 网格模式 + 用户没设过宽度：内容兜底（保证图标不被裁）。
+    [InlineData(false, false, 900, 900 + DesktopBoxViewModel.MergedGridWidthChrome)]
+    // 还没量到内容宽度：不兜底。
+    [InlineData(false, false, 0, 0)]
+    public void ResolveContentWidthFloor_SkipsListModeAndUserChosenWidths(
+        bool isMappingListMode,
+        bool hasCustomWidth,
+        double gridCanvasWidth,
+        double expected)
     {
-        // 只增不减：内容更宽时变宽，内容变窄时保持原宽度（避免切换标签时忽宽忽窄）。
-        var wide = DesktopBoxViewModel.CalculateHostBoxWidth(220, 400);
-        var narrow = DesktopBoxViewModel.CalculateHostBoxWidth(wide, 180);
-
-        Assert.Equal(wide, narrow);
+        Assert.Equal(
+            expected,
+            DesktopBoxViewModel.ResolveContentWidthFloor(
+                isMappingListMode,
+                hasCustomWidth,
+                gridCanvasWidth));
     }
 }

@@ -150,6 +150,11 @@ public sealed class TabHostBehaviorTests
             Assert.Equal(300, host.HostBoxWidth);
             Assert.True(host.MappingListViewWidth < 300);
 
+            // 用户拖过宽度后内容不再影响它：切到列表模式也不会被撑宽。
+            await host.UseMappingListModeCommand.ExecuteAsync(null);
+            Assert.True(host.IsMappingListMode);
+            Assert.Equal(300, host.HostBoxWidth);
+
             // 过窄仍被夹到下限，不会把内容裁掉。
             host.ResizeMappingListWidth(40);
             Assert.Equal(DesktopBoxViewModel.MinimumMappingListWidth, host.HostBoxWidth);

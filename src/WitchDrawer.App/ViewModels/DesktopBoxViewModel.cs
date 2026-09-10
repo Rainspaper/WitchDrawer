@@ -91,9 +91,6 @@ public sealed class DesktopBoxViewModel : ObservableObject
     private bool _isDragOver;
     private bool _isMappingListMode;
     private double _mappingListWidth;
-
-    /// <summary>合并宿主本次运行内见过的最大内容宽度，作为统一外宽的下界（只增不减）。</summary>
-    private double _mergedContentWidthFloor;
     private bool _hasCustomMappingListWidth;
     private double _mappingListHeight = double.NaN;
     private bool _hasCustomMappingListHeight;
@@ -175,11 +172,34 @@ public sealed class DesktopBoxViewModel : ObservableObject
     public bool UsesUnifiedWidth => IsTabHost && IsMappingBox;
 
     /// <summary>
-    /// 合并宿主的统一外宽 = max(用户设定的映射盒宽度, 网格内容需要的宽度)，再夹在上下限之间。
-    /// 内容只是"下界"（保证图标不被裁切），所以切换模式/标签时宽度恒定；
-    /// 只有某个标签的内容确实更宽时才会变宽，且本次运行内不会缩回去（避免来回跳）。
+    /// 合并宿主的统一外宽 = max(用户设定的映射盒宽度, 内容兜底宽度)，再夹在上下限之间，
+    /// 两种模式、各个标签共用它，切换模式/标签时不会变宽变窄。
+    /// 用户拖拽过宽度（或读取到已保存宽度）后，内容兜底失效 —— 宽度完全听用户的，
+    /// 否则会出现"盒子被强制撑得很宽、拖也拖不动"。
     /// </summary>
-    public double HostBoxWidth => CalculateHostBoxWidth(_mappingListWidth, _mergedContentWidthFloor);
+    public double HostBoxWidth => CalculateHostBoxWidth(_mappingListWidth, ContentWidthFloor);
+
+    /// <summary>
+    /// 网格内容宽度换算成盒子外宽的兜底值。
+    /// 两种情况不兜底：列表模式（列表自己适应宽度）、用户已设定过宽度。
+    /// </summary>
+    private double ContentWidthFloor => ResolveContentWidthFloor(
+        IsMappingListMode,
+        _hasCustomMappingListWidth,
+        GridCanvasWidth);
+
+    internal static double ResolveContentWidthFloor(
+        bool isMappingListMode,
+        bool hasCustomWidth,
+        double gridCanvasWidth)
+    {
+        if (isMappingListMode || hasCustomWidth || gridCanvasWidth <= 0)
+        {
+            return 0;
+        }
+
+        return gridCanvasWidth + MergedGridWidthChrome;
+    }
 
     internal static double CalculateHostBoxWidth(double storedWidth, double contentFloorWidth)
     {
@@ -1474,6 +1494,8 @@ public sealed class DesktopBoxViewModel : ObservableObject
             OnPropertyChanged(nameof(IsDrawerExpanded));
             OnPropertyChanged(nameof(IsDrawerCollapsed));
             OnPropertyChanged(nameof(HeaderRowHeight));
+            // 网格/列表切换会改变"内容兜底"是否生效（列表模式不兜底），统一外宽要跟着重算。
+            NotifyHostWidthChanged();
             HideDragPreview();
             UpdateItemIconSizes();
         }
@@ -2026,30 +2048,9 @@ public sealed class DesktopBoxViewModel : ObservableObject
 
         if (IsTabHost)
         {
-            // 合并宿主：内容宽度决定盒子外宽的下界（保证图标不被裁），切标签后也要重算。
-            UpdateMergedContentWidthFloor();
+            // 画布范围变了 → 统一外宽的内容兜底值也要重算（列表模式或用户设过宽度时兜底为 0）。
+            NotifyHostWidthChanged();
         }
-    }
-
-    /// <summary>
-    /// 记录"网格内容实际需要的盒子宽度"，作为 <see cref="HostBoxWidth"/> 的下界。
-    /// 本次运行内只增不减，避免切换标签时盒子忽宽忽窄。
-    /// </summary>
-    private void UpdateMergedContentWidthFloor()
-    {
-        if (GridCanvasWidth <= 0)
-        {
-            return;
-        }
-
-        var required = GridCanvasWidth + MergedGridWidthChrome;
-        if (required <= _mergedContentWidthFloor)
-        {
-            return;
-        }
-
-        _mergedContentWidthFloor = required;
-        NotifyHostWidthChanged();
     }
 
     /// <summary>
