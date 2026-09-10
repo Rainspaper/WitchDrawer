@@ -269,8 +269,8 @@ public sealed class DesktopBoxWindowTemplateTests
             rootGrid.Descendants(PresentationNamespace + "Button"),
             element => (string?)element.Attribute("Click") == "OnToggleRollUpClick");
 
-        Assert.Equal("{Binding TabBarRowHeight}", (string?)definitions[0].Attribute("Height"));
-        Assert.Equal("{Binding HeaderRowHeight}", (string?)definitions[1].Attribute("Height"));
+        Assert.Equal("{Binding HeaderRowHeight}", (string?)definitions[0].Attribute("Height"));
+        Assert.Equal("{Binding TabBarRowHeight}", (string?)definitions[1].Attribute("Height"));
         Assert.Equal("{Binding ContentRowHeight}", (string?)definitions[2].Attribute("Height"));
         Assert.Equal("2", (string?)button.Attribute("Grid.Column"));
     }
@@ -291,20 +291,23 @@ public sealed class DesktopBoxWindowTemplateTests
             contentGrid.Descendants(PresentationNamespace + "ItemsControl"),
             element => (string?)element.Attribute(XamlNamespace + "Name") == "TabStrip");
 
-        // Tab 栏必须独占一行（第 0 行），标题栏在第 1 行，二者不再共享单元格。
+        // 标签栏独占一行且必须排在标题栏之下：上面一行显示当前选中的盒子名，下面列出全部标签。
         var tabRow = Assert.Single(
             tabStrip.Ancestors(PresentationNamespace + "Canvas"));
-        Assert.Equal("0", (string?)tabRow.Attribute("Grid.Row"));
+        Assert.Equal("1", (string?)tabRow.Attribute("Grid.Row"));
         Assert.Equal(
             "{Binding IsTabHost, Converter={StaticResource BooleanToVisibilityConverter}}",
             (string?)tabRow.Attribute("Visibility"));
 
         var headerGrid = Assert.Single(
             contentGrid.Elements(PresentationNamespace + "Grid"),
-            element => (string?)element.Attribute("Grid.Row") == "1");
+            element => (string?)element.Attribute("Grid.Row") == "0");
         Assert.Equal(
             "{Binding IsHeaderVisible, Converter={StaticResource BooleanToVisibilityConverter}}",
             (string?)headerGrid.Attribute("Visibility"));
+        Assert.True(
+            int.Parse((string)tabRow.Attribute("Grid.Row")!) > int.Parse((string)headerGrid.Attribute("Grid.Row")!),
+            "标签栏必须位于标题栏下方。");
 
         // 标签条放在 Canvas 中：宽度不参与窗口测量，宿主盒子不会被标签撑宽。
         var tabRowWidthBindings = tabRow.Elements()
@@ -356,11 +359,16 @@ public sealed class DesktopBoxWindowTemplateTests
             style.Elements(PresentationNamespace + "Setter"),
             setter => (string?)setter.Attribute("Property") == "Padding");
 
-        // 主题适配：默认文字色、活动态底色/文字色都必须是主题动态资源。
+        // 主题适配：默认文字色、选中态底色/文字色/描边都必须是盒子自身那套动态资源，
+        // 这样标签栏底色会随「主题 + 盒子不透明度」一起变。
         Assert.Contains(
             style.Elements(PresentationNamespace + "Setter"),
             setter => (string?)setter.Attribute("Property") == "Foreground"
                 && (string?)setter.Attribute("Value") == "{DynamicResource TextMutedBrush}");
+        Assert.Contains(
+            style.Elements(PresentationNamespace + "Setter"),
+            setter => (string?)setter.Attribute("Property") == "BorderThickness"
+                && (string?)setter.Attribute("Value") == "1");
 
         var activeTrigger = Assert.Single(
             style.Descendants(PresentationNamespace + "DataTrigger"),
@@ -370,11 +378,21 @@ public sealed class DesktopBoxWindowTemplateTests
             activeSetters,
             setter => (string?)setter.Attribute("TargetName") == "Chip"
                 && (string?)setter.Attribute("Property") == "Background"
-                && (string?)setter.Attribute("Value") == "{DynamicResource AccentSoftBrush}");
+                && (string?)setter.Attribute("Value") == "{DynamicResource GlassInnerBrush}");
+        Assert.Contains(
+            activeSetters,
+            setter => (string?)setter.Attribute("TargetName") == "Chip"
+                && (string?)setter.Attribute("Property") == "BorderBrush"
+                && (string?)setter.Attribute("Value") == "{DynamicResource GlassStrokeBrush}");
         Assert.Contains(
             activeSetters,
             setter => (string?)setter.Attribute("Property") == "Foreground"
                 && (string?)setter.Attribute("Value") == "{DynamicResource AccentBrush}");
+
+        // 选中项只做轻微高亮：不换字重（换字重会让标签宽度抖动、位置跳动）。
+        Assert.DoesNotContain(
+            activeSetters,
+            setter => (string?)setter.Attribute("Property") == "FontWeight");
 
         var hoverTrigger = Assert.Single(
             style.Descendants(PresentationNamespace + "Trigger"),

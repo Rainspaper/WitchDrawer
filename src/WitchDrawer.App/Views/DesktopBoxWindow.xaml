@@ -104,67 +104,16 @@
         
         <Grid x:Name="BoxContentGrid" Background="Transparent" MouseLeftButtonDown="OnSurfaceMouseLeftButtonDown">
             <Grid.RowDefinitions>
-                <!-- Tab 栏独占一行：普通盒子行高为 0，单盒窗口布局与之前完全一致。 -->
-                <RowDefinition Height="{Binding TabBarRowHeight}" />
+                <!-- 标题栏在上（显示当前选中的标签名），标签栏在其下（列出全部已收纳盒子），
+                     内容区最后。标签栏行高在非宿主时为 0，单盒窗口布局与之前完全一致。 -->
                 <RowDefinition Height="{Binding HeaderRowHeight}" />
+                <RowDefinition Height="{Binding TabBarRowHeight}" />
                 <RowDefinition Height="{Binding ContentRowHeight}" />
             </Grid.RowDefinitions>
 
-            <!-- Tab 栏：仅多标签宿主窗口显示。每个按钮切换 ActiveTabVm。
-                 外层 Canvas 不参与父级测量，标签条宽度不会把宿主盒子撑宽；
-                 超出盒子可视宽度的标签可在标签条上滚动横向查看。
-                 底衬/分隔线必须 IsHitTestVisible=False，否则标签栏区域无法拖动盒子。 -->
-            <Canvas Grid.Row="0"
-                    Panel.ZIndex="6"
-                    ClipToBounds="True"
-                    Visibility="{Binding IsTabHost, Converter={StaticResource BooleanToVisibilityConverter}}">
-                <Rectangle Canvas.Left="0"
-                           Canvas.Top="0"
-                           Width="{Binding ActualWidth, ElementName=BoxContentGrid}"
-                           Height="{Binding TabBarRowHeight}"
-                           Fill="{DynamicResource GlassInnerBrush}"
-                           IsHitTestVisible="False"
-                           SnapsToDevicePixels="True" />
-                <ScrollViewer Canvas.Left="0"
-                              Canvas.Top="1"
-                              Width="{Binding ActualWidth, ElementName=BoxContentGrid}"
-                              HorizontalScrollBarVisibility="Hidden"
-                              VerticalScrollBarVisibility="Disabled">
-                    <ItemsControl x:Name="TabStrip"
-                                  Margin="8,0,8,0"
-                                  ItemsSource="{Binding TabVms}">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <StackPanel Orientation="Horizontal" />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Button Click="OnTabButtonClick"
-                                        CommandParameter="{Binding BoxId}"
-                                        Style="{StaticResource TabChipButtonStyle}"
-                                        ToolTip="{Binding Name}">
-                                    <TextBlock Text="{Binding Name}"
-                                               TextTrimming="CharacterEllipsis"
-                                               MaxWidth="86" />
-                                </Button>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </ScrollViewer>
-                <Rectangle Canvas.Left="0"
-                           Canvas.Bottom="0"
-                           Width="{Binding ActualWidth, ElementName=BoxContentGrid}"
-                           Height="1"
-                           Fill="{DynamicResource GlassStrokeBrush}"
-                           Opacity="0.6"
-                           IsHitTestVisible="False"
-                           SnapsToDevicePixels="True" />
-            </Canvas>
-
             <!-- 顶部标题栏与 macOS 关闭小红点 -->
             <!-- 左侧名称 / 视图切换 / 卷起 / 关闭。 -->
-            <Grid Grid.Row="1"
+            <Grid Grid.Row="0"
                   Background="Transparent"
                   Visibility="{Binding IsHeaderVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <Grid.ColumnDefinitions>
@@ -395,6 +344,52 @@
                     </Button.Template>
                 </Button>
             </Grid>
+
+            <!-- 标签栏：仅多标签宿主窗口显示，位于标题栏之下、内容区之上。
+                 上面一行显示当前选中的盒子名，这一行列出全部已收纳的盒子标签。
+                 外层 Canvas 不参与父级测量，标签条宽度不会把宿主盒子撑宽；
+                 超出盒子可视宽度的标签可在标签条上滚动横向查看。
+                 分隔线属于装饰层，必须 IsHitTestVisible=False，否则会吃掉拖动盒子的事件。 -->
+            <Canvas Grid.Row="1"
+                    Panel.ZIndex="6"
+                    ClipToBounds="True"
+                    Visibility="{Binding IsTabHost, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <ScrollViewer Canvas.Left="0"
+                              Canvas.Top="1"
+                              Width="{Binding ActualWidth, ElementName=BoxContentGrid}"
+                              HorizontalScrollBarVisibility="Hidden"
+                              VerticalScrollBarVisibility="Disabled">
+                    <ItemsControl x:Name="TabStrip"
+                                  Margin="8,0,8,0"
+                                  ItemsSource="{Binding TabVms}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Click="OnTabButtonClick"
+                                        CommandParameter="{Binding BoxId}"
+                                        Style="{StaticResource TabChipButtonStyle}"
+                                        ToolTip="{Binding Name}">
+                                    <TextBlock Text="{Binding Name}"
+                                               TextTrimming="CharacterEllipsis"
+                                               MaxWidth="86" />
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+                <Rectangle Canvas.Left="0"
+                           Canvas.Bottom="0"
+                           Width="{Binding ActualWidth, ElementName=BoxContentGrid}"
+                           Height="1"
+                           Fill="{DynamicResource GlassStrokeBrush}"
+                           Opacity="0.6"
+                           IsHitTestVisible="False"
+                           SnapsToDevicePixels="True" />
+            </Canvas>
 
             <!-- 主内容区: ListBox -->
             <ListBox x:Name="IconList"

@@ -48,9 +48,11 @@
         </Setter>
     </Style>
 
-    <!-- 多标签总盒子的标签卡。
-         配色一律走主题动态资源，外观随「主题 + 盒子透明度」自动变化：
-         未选中=低调文字，悬停=中性底 + 正文色，选中=主题强调色底 + 强调色文字。
+    <!-- 多标签总盒子的标签卡（标题栏下方一行，列出全部已收纳的盒子）。
+         底色只取盒子自身用到的那套画刷（GlassInnerBrush / HoverBrush / GlassStrokeBrush），
+         它们会被盒子按「主题 + 盒子不透明度」重写进窗口资源，所以标签栏外观与盒子原本设置同步，
+         不会出现与盒子表面不同材质的色块。
+         选中项只做轻微高亮：盒子内面色 + 主题强调色文字 + 一圈细描边，不加粗、不换字重（避免文字抖动）。
          这里刻意不设 Width：标签必须按文字自适应，否则文字会溢出按钮边界互相叠压。 -->
     <Style x:Key="TabChipButtonStyle" TargetType="{x:Type Button}">
         <Setter Property="Height" Value="20" />
@@ -59,7 +61,9 @@
         <Setter Property="FontSize" Value="11" />
         <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
         <Setter Property="Background" Value="Transparent" />
-        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <!-- 恒为 1：选中项才显示描边，固定厚度可避免选中时文字位移 1px。 -->
+        <Setter Property="BorderThickness" Value="1" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="Focusable" Value="False" />
         <Setter Property="FocusVisualStyle" Value="{x:Null}" />
@@ -69,6 +73,8 @@
                 <ControlTemplate TargetType="{x:Type Button}">
                     <Border x:Name="Chip"
                             Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
                             CornerRadius="6"
                             Padding="{TemplateBinding Padding}"
                             SnapsToDevicePixels="True">
@@ -77,7 +83,7 @@
                     </Border>
                     <ControlTemplate.Triggers>
                         <!-- 同一模板内多个触发器按声明顺序生效，后声明者优先：
-                             选中态放在最后，保证活动标签悬停时也不会丢掉强调色。 -->
+                             选中态放在最后，保证活动标签悬停时也不会丢掉高亮。 -->
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="Chip"
                                     Property="Background"
@@ -91,10 +97,12 @@
                         <DataTrigger Binding="{Binding IsActiveTab}" Value="True">
                             <Setter TargetName="Chip"
                                     Property="Background"
-                                    Value="{DynamicResource AccentSoftBrush}" />
+                                    Value="{DynamicResource GlassInnerBrush}" />
+                            <Setter TargetName="Chip"
+                                    Property="BorderBrush"
+                                    Value="{DynamicResource GlassStrokeBrush}" />
                             <Setter Property="Foreground"
                                     Value="{DynamicResource AccentBrush}" />
-                            <Setter Property="FontWeight" Value="SemiBold" />
                         </DataTrigger>
                         <DataTrigger Binding="{Binding IsPixelStyle}" Value="True">
                             <Setter TargetName="Chip" Property="CornerRadius" Value="4" />
