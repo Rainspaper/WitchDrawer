@@ -1,0 +1,185 @@
+using System.IO;
+using WitchDrawer.App.ViewModels;
+using WitchDrawer.Core;
+using WitchDrawer.Core.Abstractions;
+using WitchDrawer.Core.Logging;
+using WitchDrawer.Core.Models;
+using WitchDrawer.Core.Services;
+using WitchDrawer.Core.Storage;
+
+namespace WitchDrawer.App.Tests;
+
+/// <summary>
+/// 多标签总盒子的行为回归：
+/// <list type="bullet">
+/// <item>标签栏每格显示「盒子自己的名字」（<see cref="DesktopBoxViewModel.TabLabel"/>），
+/// 而不是会跟随选中项的窗口名（<see cref="DesktopBoxViewModel.Name"/>）。</item>
+/// <item>网格/列表模式按盒子各自记录，切换标签时显示的是该标签自己那份模式。</item>
+/// <item>切换标签必须整体刷新派生状态，否则内容区会停留在上一个标签上。</item>
+/// </list>
+/// </summary>
+public sealed class TabHostBehaviorTests
+{
+    [Fact]
+    public async Task TabLabel_KeepsOwnName_WhileNameFollowsTheActiveTab()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var (drawerService, todoService) = await CreateServicesAsync(root);
+            var host = CreateViewModel("工具", BoxType.Normal, drawerService, todoService);
+            var member = CreateViewModel("便携优化", BoxType.Normal, drawerService, todoService);
+
+            host.IsTabHost = true;
+            host.InitializeTabs([member]);
+
+            Assert.Equal("工具", host.TabLabel);
+            Assert.Equal("便携优化", member.TabLabel);
+
+            // 切到成员标签：标签栏文字一律不动，只有标题栏跟随选中项。
+            host.ActiveTabVm = member;
+
+            Assert.Equal("工具", host.TabLabel);
+            Assert.Equal("便携优化", member.TabLabel);
+            Assert.Equal("便携优化", host.Name);
+            Assert.True(member.IsActiveTab);
+            Assert.False(host.IsActiveTab);
+
+            // 切回宿主标签，同样成立。
+            host.ActiveTabVm = host;
+
+            Assert.Equal("工具", host.TabLabel);
+            Assert.Equal("工具", host.Name);
+            Assert.True(host.IsActiveTab);
+            Assert.False(member.IsActiveTab);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task GridListMode_IsRememberedPerTab_AndSwitchingRefreshesDerivedState()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var (drawerService, todoService) = await CreateServicesAsync(root);
+            var host = CreateViewModel("工具", BoxType.Mapping, drawerService, todoService);
+            var member = CreateViewModel("AI", BoxType.Mapping, drawerService, todoService);
+
+            // 宿主自己切成列表模式，成员保持默认的网格模式。
+            await host.UseMappingListModeCommand.ExecuteAsync(null);
+            Assert.True(host.IsMappingListMode);
+            Assert.Equal(
+                "List",
+                await drawerService.GetSettingAsync(
+                    DesktopBoxViewModel.GetMappingViewModeSettingKey(host.BoxId)));
+
+            host.IsTabHost = true;
+            host.InitializeTabs([member]);
+            Assert.True(host.IsMappingListMode);
+
+            var raised = new List<string>();
+            host.PropertyChanged += (_, args) => raised.Add(args.PropertyName ?? string.Empty);
+            host.ActiveTabVm = member;
+
+            // 关键：跟随成员自己的网格模式，而不是沿用宿主的列表模式。
+            Assert.False(host.IsMappingListMode);
+            Assert.True(host.IsGridMode);
+            // 派生状态必须在切换时通知，否则绑定会停留在上一个标签的值上。
+            Assert.Contains(nameof(DesktopBoxViewModel.IsMappingListMode), raised);
+            Assert.Contains(nameof(DesktopBoxViewModel.IsGridMode), raised);
+            Assert.Contains(nameof(DesktopBoxViewModel.Name), raised);
+            Assert.Contains(nameof(DesktopBoxViewModel.HeaderRowHeight), raised);
+
+            // 在成员标签上切模式：记到成员自己的设置键上，宿主那份不受影响。
+            await host.UseMappingListModeCommand.ExecuteAsync(null);
+            Assert.True(host.IsMappingListMode);
+            Assert.Equal(
+                "List",
+                await drawerService.GetSettingAsync(
+                    DesktopBoxViewModel.GetMappingViewModeSettingKey(member.BoxId)));
+            Assert.Equal(
+                "List",
+                await drawerService.GetSettingAsync(
+                    DesktopBoxViewModel.GetMappingViewModeSettingKey(host.BoxId)));
+
+            // 切回宿主标签：宿主自己的模式仍然保留。
+            host.ActiveTabVm = host;
+            Assert.True(host.IsMappingListMode);
+            Assert.True(host.IsActiveTab);
+            Assert.False(member.IsActiveTab);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    private static string CreateTempRoot()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "WitchDrawer.TabHost",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        return root;
+    }
+
+    private static async Task<(DrawerService DrawerService, TodoService TodoService)> CreateServicesAsync(
+        string root)
+    {
+        var paths = new AppPaths(root);
+        var repository = new DrawerRepository(paths.DatabasePath);
+        var drawerService = new DrawerService(paths, repository);
+        await drawerService.InitializeAsync();
+        return (drawerService, new TodoService(repository));
+    }
+
+    private static DesktopBoxViewModel CreateViewModel(
+        string name,
+        BoxType type,
+        DrawerService drawerService,
+        TodoService todoService)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var box = new Box(
+            Guid.NewGuid(),
+            name,
+            type,
+            StoragePath: null,
+            SortOrder: 0,
+            now,
+            now);
+        return new DesktopBoxViewModel(
+            box,
+            drawerService,
+            todoService,
+            new NoopLauncher(),
+            NullAppLogger.Instance,
+            BoxVisualStyle.Modern);
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            Directory.Delete(path, recursive: true);
+        }
+        catch (IOException)
+        {
+            // SQLite 连接池或文件句柄可能还没释放，临时目录残留不影响测试结论。
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
+    private sealed class NoopLauncher : IFileLauncher
+    {
+        public Task OpenAsync(string path, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+    }
+}

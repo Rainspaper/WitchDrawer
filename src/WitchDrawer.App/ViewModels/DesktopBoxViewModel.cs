@@ -405,7 +405,11 @@ public sealed class DesktopBoxViewModel : ObservableObject
         96,
         MaximumDrawerSecondaryPanelDimension);
 
-    public bool IsMappingListMode => IsMappingBox && _isMappingListMode;
+    /// <summary>
+    /// 当前显示的盒子是否为映射盒的"列表"模式。标签宿主下取<b>当前选中标签自己</b>的模式，
+    /// 所以每个标签独立记住网格/列表，切换标签不会串。
+    /// </summary>
+    public bool IsMappingListMode => IsMappingBox && (ActiveTab?._isMappingListMode ?? _isMappingListMode);
 
     public bool IsGridMode => !IsMappingListMode;
 
@@ -632,19 +636,58 @@ public sealed class DesktopBoxViewModel : ObservableObject
                 value.IsActiveTab = true;
             }
 
-            // 通知所有重定向到 ActiveTabVm 的派生属性。
+            // 内容源 + 所有重定向到 ActiveTabVm 的派生状态一起刷新：
+            // 少通知一项，界面上就会出现"换了标签但某块还是上一个标签"的残留。
             OnPropertyChanged(nameof(Items));
             OnPropertyChanged(nameof(TodoItems));
-            OnPropertyChanged(nameof(IsMappingListMode));
-            OnPropertyChanged(nameof(IsMappingBox));
-            OnPropertyChanged(nameof(IsTodoBox));
-            OnPropertyChanged(nameof(IsDrawerBox));
-            OnPropertyChanged(nameof(MappingListWidth));
-            OnPropertyChanged(nameof(MappingListHeight));
-            OnPropertyChanged(nameof(TodoBoxWidth));
-            OnPropertyChanged(nameof(TodoBoxHeight));
-            OnPropertyChanged(nameof(Name));
+            RefreshActiveTabState();
         }
+    }
+
+    /// <summary>
+    /// 刷新所有"跟随当前活动标签"的派生状态：标题、盒型、网格/列表模式、各类行高与尺寸、
+    /// 图标尺寸、虚拟化画布范围、抽屉封面瓦片。切换标签后必须整体刷新一次，
+    /// 否则内容区会停留在上一个标签的布局上（换了标签看不到新标签的内容）。
+    /// </summary>
+    private void RefreshActiveTabState()
+    {
+        OnPropertyChanged(nameof(Name));
+        OnPropertyChanged(nameof(Type));
+        OnPropertyChanged(nameof(VisualStyle));
+        OnPropertyChanged(nameof(IsPixelStyle));
+        OnPropertyChanged(nameof(IsMappingBox));
+        OnPropertyChanged(nameof(IsTodoBox));
+        OnPropertyChanged(nameof(IsDrawerBox));
+        OnPropertyChanged(nameof(IsDrawerStyleEnabled));
+        OnPropertyChanged(nameof(IsDrawerExpanded));
+        OnPropertyChanged(nameof(IsDrawerCollapsed));
+        OnPropertyChanged(nameof(IsMappingListMode));
+        OnPropertyChanged(nameof(IsGridMode));
+        OnPropertyChanged(nameof(SupportsRollUp));
+        OnPropertyChanged(nameof(IsRolledUp));
+        OnPropertyChanged(nameof(IsHeaderTitleVisible));
+        OnPropertyChanged(nameof(IsHeaderVisible));
+        OnPropertyChanged(nameof(HeaderRowHeight));
+        OnPropertyChanged(nameof(ContentRowHeight));
+        OnPropertyChanged(nameof(DrawerContentHeight));
+        OnPropertyChanged(nameof(MappingListWidth));
+        OnPropertyChanged(nameof(MappingListHeight));
+        OnPropertyChanged(nameof(TodoBoxWidth));
+        OnPropertyChanged(nameof(TodoBoxHeight));
+        OnPropertyChanged(nameof(TypeLabel));
+        OnPropertyChanged(nameof(Description));
+        OnPropertyChanged(nameof(IsEmpty));
+        OnPropertyChanged(nameof(ItemCountLabel));
+        OnPropertyChanged(nameof(ShowFileEmptyState));
+        AddTodoCommand.NotifyCanExecuteChanged();
+        ArchiveCompletedTodosCommand.NotifyCanExecuteChanged();
+        HideDragPreview();
+        UpdateItemIconSizes();
+        // 画布范围按新标签的项目重算并通知 GridCanvasWidth/Height：
+        // 虚拟化面板靠它决定显示哪些项，停留在旧范围会看不到新标签的图标。
+        UpdateGridCanvasSize();
+        // 抽屉封面瓦片取自 Items，也必须跟着标签换。
+        RefreshDrawerPreview();
     }
 
     /// <summary>是否作为多标签总盒子的宿主。</summary>
@@ -1319,14 +1362,16 @@ public sealed class DesktopBoxViewModel : ObservableObject
 
     public async Task LoadMappingViewModeAsync()
     {
-        if (!IsMappingBox)
+        // 读的是本 VM 自己那份盒子的设置（不能用 IsMappingBox：标签宿主下它跟随活动标签）。
+        if (_box.Type != BoxType.Mapping)
         {
             return;
         }
 
         try
         {
-            var savedMode = await _drawerService.GetSettingAsync(MappingViewModeSettingPrefix + BoxId.ToString("N"));
+            var savedMode = await _drawerService.GetSettingAsync(
+                GetMappingViewModeSettingKey(_box.Id));
             SetMappingListMode(string.Equals(savedMode, MappingListViewMode, StringComparison.OrdinalIgnoreCase));
         }
         catch (Exception exception)
@@ -1335,9 +1380,25 @@ public sealed class DesktopBoxViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// 切换网格/列表模式。标签宿主下作用在"当前显示的盒子"上，
+    /// 并按该盒子自己的 Id 持久化，这样每个标签各自记住模式。
+    /// </summary>
     private async Task SetMappingViewModeAsync(bool useListMode)
     {
-        if (!IsMappingBox)
+        var target = ActiveTab ?? this;
+        await target.ApplyMappingViewModeAsync(useListMode);
+
+        if (!ReferenceEquals(target, this))
+        {
+            // 模式记在成员盒上，宿主窗口要把派生状态（IsMappingListMode/IsGridMode…）重刷一遍。
+            RefreshActiveTabState();
+        }
+    }
+
+    private async Task ApplyMappingViewModeAsync(bool useListMode)
+    {
+        if (_box.Type != BoxType.Mapping)
         {
             return;
         }
@@ -1346,7 +1407,9 @@ public sealed class DesktopBoxViewModel : ObservableObject
         {
             SetMappingListMode(useListMode);
             var mode = useListMode ? MappingListViewMode : MappingGridViewMode;
-            await _drawerService.SetSettingAsync(MappingViewModeSettingPrefix + BoxId.ToString("N"), mode);
+            await _drawerService.SetSettingAsync(
+                GetMappingViewModeSettingKey(_box.Id),
+                mode);
         }
         catch (Exception exception)
         {
@@ -1391,14 +1454,14 @@ public sealed class DesktopBoxViewModel : ObservableObject
 
     public async Task LoadMappingListWidthAsync()
     {
-        if (!IsMappingBox)
+        if (_box.Type != BoxType.Mapping)
         {
             return;
         }
 
         try
         {
-            var saved = await _drawerService.GetSettingAsync(GetMappingListWidthSettingKey(BoxId));
+            var saved = await _drawerService.GetSettingAsync(GetMappingListWidthSettingKey(_box.Id));
             if (double.TryParse(saved, NumberStyles.Float, CultureInfo.InvariantCulture, out var width)
                 && double.IsFinite(width))
             {
@@ -1444,6 +1507,9 @@ public sealed class DesktopBoxViewModel : ObservableObject
 
     internal static string GetMappingListWidthSettingKey(Guid boxId) =>
         MappingListWidthSettingPrefix + boxId.ToString("N");
+
+    internal static string GetMappingViewModeSettingKey(Guid boxId) =>
+        MappingViewModeSettingPrefix + boxId.ToString("N");
 
     internal static double NormalizeMappingListWidth(double width, double fallback)
     {
