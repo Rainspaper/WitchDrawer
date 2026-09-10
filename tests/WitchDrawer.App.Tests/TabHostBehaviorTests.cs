@@ -180,6 +180,14 @@ public sealed class TabHostBehaviorTests
             host.ActiveTabVm = member;
             Assert.Equal(340, host.HostBoxHeight);
             Assert.True(host.HasUnifiedHeight);
+
+            // 合并/解散必须通知 UsesUnifiedBoxSize：窗口靠它决定"宽度按内容自适应"还是"固定尺寸"。
+            var raisedOnMergeToggle = new List<string>();
+            host.PropertyChanged += (_, args) => raisedOnMergeToggle.Add(args.PropertyName ?? string.Empty);
+            host.IsTabHost = false;
+            host.IsTabHost = true;
+            Assert.Contains(nameof(DesktopBoxViewModel.UsesUnifiedBoxSize), raisedOnMergeToggle);
+            Assert.Contains(nameof(DesktopBoxViewModel.HostBoxWidth), raisedOnMergeToggle);
         }
         finally
         {

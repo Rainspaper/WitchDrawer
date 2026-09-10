@@ -102,6 +102,8 @@ public partial class DesktopBoxWindow : Window
         _itemContextMenu = new DrawerItemContextMenuCoordinator(viewModel);
         DataContext = viewModel;
         InitializeComponent();
+        viewModel.PropertyChanged += OnBoxViewModelPropertyChanged;
+        ApplyUnifiedBoxSize();
         WindowBorder.CornerRadius = new CornerRadius(BoxAppearanceSettings.CornerRadius);
         WeakReferenceMessenger.Default.Register<BoxCornerRadiusChangedMessage>(this, static (recipient, message) =>
         {
@@ -129,6 +131,54 @@ public partial class DesktopBoxWindow : Window
     }
 
     public DesktopBoxViewModel ViewModel => (DesktopBoxViewModel)DataContext;
+
+    /// <summary>
+    /// 合并宿主的统一尺寸由 VM 驱动：宽/高属性变化时直接改窗口。
+    /// 不用 Style 触发器里的绑定来设 Width/Height —— 那种 Setter 的绑定只在触发器条件变化时
+    /// 应用一次，属性变化不会刷新，结果是"列表宽度跟着变、窗口尺寸卡住不动"。
+    /// </summary>
+    private void OnBoxViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(DesktopBoxViewModel.UsesUnifiedBoxSize)
+            or nameof(DesktopBoxViewModel.HasUnifiedHeight)
+            or nameof(DesktopBoxViewModel.HostBoxWidth)
+            or nameof(DesktopBoxViewModel.HostBoxHeight))
+        {
+            ApplyUnifiedBoxSize();
+        }
+    }
+
+    private void ApplyUnifiedBoxSize()
+    {
+        if (ViewModel is not { } viewModel)
+        {
+            return;
+        }
+
+        if (!viewModel.UsesUnifiedBoxSize)
+        {
+            // 普通盒子（含未合并的映射盒）：保持宽度/高度跟随内容。
+            SizeToContent = SizeToContent.WidthAndHeight;
+            ClearValue(WidthProperty);
+            ClearValue(HeightProperty);
+            return;
+        }
+
+        // 合并宿主：外宽统一（网格/列表共用），高度在用户设定过之后也固定。
+        SizeToContent = viewModel.HasUnifiedHeight
+            ? SizeToContent.Manual
+            : SizeToContent.Height;
+        Width = viewModel.HostBoxWidth;
+
+        if (viewModel.HasUnifiedHeight)
+        {
+            Height = viewModel.HostBoxHeight;
+        }
+        else
+        {
+            ClearValue(HeightProperty);
+        }
+    }
 
     /// <summary>拖拽本盒到另一盒上时，目标盒作为合并宿主被预览高亮。</summary>
     public static readonly DependencyProperty IsMergePreviewTargetProperty =
@@ -1204,6 +1254,11 @@ public partial class DesktopBoxWindow : Window
         _source?.RemoveHook(WindowMessageHook);
         _source = null;
         _nativeWindow = null;
+        if (DataContext is DesktopBoxViewModel viewModel)
+        {
+            viewModel.PropertyChanged -= OnBoxViewModelPropertyChanged;
+        }
+
         _itemContextMenu.Dispose();
         if (Application.Current is not null)
         {

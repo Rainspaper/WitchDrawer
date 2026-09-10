@@ -24,23 +24,13 @@
         PreviewDragLeave="OnPreviewDragLeave">
     <Window.Style>
         <Style TargetType="{x:Type Window}">
-            <!-- 自适应：盒子宽度/高度跟随内容（图标列数），不再有 180px 硬下限。 -->
+            <!-- 自适应：盒子宽度/高度跟随内容（图标列数），不再有 180px 硬下限。
+                 合并宿主的统一宽高不在这里设：Style 触发器里的绑定只在触发器条件变化时应用一次，
+                 属性变化不会刷新（拖拽尺寸会失效），改由 DesktopBoxWindow.ApplyUnifiedBoxSize() 在代码里驱动。 -->
             <Setter Property="SizeToContent" Value="WidthAndHeight" />
             <Setter Property="MinWidth" Value="0" />
             <Setter Property="MinHeight" Value="0" />
             <Style.Triggers>
-                <!-- 合并宿主：网格与列表共用同一个外宽（HostBoxWidth），两种模式的自然宽度本来就不同，
-                     统一外宽后切换模式/标签盒子不会变宽。未设定高度时高度仍自适应。 -->
-                <DataTrigger Binding="{Binding UsesUnifiedBoxSize}" Value="True">
-                    <Setter Property="SizeToContent" Value="Height" />
-                    <Setter Property="Width" Value="{Binding HostBoxWidth}" />
-                </DataTrigger>
-                <!-- 已经拖过高度：高度也固定下来（关闭高度自适应），切换标签不再变高变矮。
-                     必须排在上面那个触发器之后才会生效。 -->
-                <DataTrigger Binding="{Binding HasUnifiedHeight}" Value="True">
-                    <Setter Property="SizeToContent" Value="Manual" />
-                    <Setter Property="Height" Value="{Binding HostBoxHeight}" />
-                </DataTrigger>
                 <DataTrigger Binding="{Binding IsMappingListMode}" Value="True">
                     <Setter Property="MinWidth" Value="150" />
                     <Setter Property="MinHeight" Value="86" />

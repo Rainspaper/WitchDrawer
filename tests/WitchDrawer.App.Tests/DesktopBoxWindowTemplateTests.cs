@@ -464,11 +464,10 @@ public sealed class DesktopBoxWindowTemplateTests
     }
 
     [Fact]
-    public void MergedHostWindow_PinsOneSharedWidthForGridAndList()
+    public void MergedHostWindow_AppliesUnifiedSizeFromCodeNotFromStyleSetters()
     {
-        // 网格与列表的自然宽度不同，合并宿主靠"统一外宽 + 触发器"让两者共用同一个宽度：
-        // SizeToContent/Width 必须写在 Style 触发器里 —— 写在 Window 上会成为本地值，
-        // 本地值优先于触发器，统一宽度就会失效。
+        // 合并宿主的统一宽高必须在代码里驱动：Style 触发器里的 Setter 绑定只在触发器条件变化时
+        // 应用一次，属性变化不会刷新 —— 曾导致"列表宽度跟着拖、窗口宽高卡住不动"。
         var document = XDocument.Load(GetDesktopBoxWindowXamlPath());
         var window = document.Root!;
         Assert.Null(window.Attribute("SizeToContent"));
@@ -481,41 +480,18 @@ public sealed class DesktopBoxWindowTemplateTests
             setter => (string?)setter.Attribute("Property") == "SizeToContent"
                 && (string?)setter.Attribute("Value") == "WidthAndHeight");
 
-        var unifiedWidthTrigger = Assert.Single(
-            style.Descendants(PresentationNamespace + "DataTrigger"),
-            element => (string?)element.Attribute("Binding") == "{Binding UsesUnifiedBoxSize}");
-        var setters = unifiedWidthTrigger.Elements(PresentationNamespace + "Setter").ToArray();
-        Assert.Contains(
-            setters,
-            setter => (string?)setter.Attribute("Property") == "SizeToContent"
-                && (string?)setter.Attribute("Value") == "Height");
-        Assert.Contains(
-            setters,
-            setter => (string?)setter.Attribute("Property") == "Width"
-                && (string?)setter.Attribute("Value") == "{Binding HostBoxWidth}");
-
-        // 拖过高度后：关闭高度自适应并把高度钉住，切换标签不再变高变矮。
-        var unifiedHeightTrigger = Assert.Single(
-            style.Descendants(PresentationNamespace + "DataTrigger"),
-            element => (string?)element.Attribute("Binding") == "{Binding HasUnifiedHeight}");
-        var heightSetters = unifiedHeightTrigger.Elements(PresentationNamespace + "Setter").ToArray();
-        Assert.Contains(
-            heightSetters,
-            setter => (string?)setter.Attribute("Property") == "SizeToContent"
-                && (string?)setter.Attribute("Value") == "Manual");
-        Assert.Contains(
-            heightSetters,
-            setter => (string?)setter.Attribute("Property") == "Height"
-                && (string?)setter.Attribute("Value") == "{Binding HostBoxHeight}");
-
-        // 同一集合里靠后的触发器优先级更高：高度触发器必须排在宽度触发器之后才生效。
-        var triggerBindings = style.Descendants(PresentationNamespace + "DataTrigger")
-            .Select(element => (string?)element.Attribute("Binding"))
+        // 不允许再用 Setter 设置 Width/Height（含触发器里的），避免退回"卡住不动"的老路。
+        var sizeSetters = style
+            .Descendants(PresentationNamespace + "Setter")
+            .Where(setter => (string?)setter.Attribute("Property") is "Width" or "Height")
             .ToArray();
-        Assert.True(
-            Array.IndexOf(triggerBindings, "{Binding HasUnifiedHeight}")
-                > Array.IndexOf(triggerBindings, "{Binding UsesUnifiedBoxSize}"),
-            "固定高度的触发器必须声明在统一宽度的触发器之后。");
+        Assert.Empty(sizeSetters);
+
+        // 代码侧必须有统一尺寸的驱动方法（无法在单测里实例化 Window，用反射锁住接线）。
+        var applyMethod = typeof(WitchDrawer.App.Views.DesktopBoxWindow).GetMethod(
+            "ApplyUnifiedBoxSize",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(applyMethod);
     }
 
     private static string GetDesktopBoxWindowXamlPath() =>

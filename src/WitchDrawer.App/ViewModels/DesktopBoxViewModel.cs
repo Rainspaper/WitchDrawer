@@ -794,6 +794,11 @@ public sealed class DesktopBoxViewModel : ObservableObject
             // Tab 栏占用标题区一行高度，合并/解散后标题栏需要整体让位或收回。
             OnPropertyChanged(nameof(TabBarRowHeight));
             OnPropertyChanged(nameof(HeaderRowHeight));
+            // 合并/解散会切换"是否使用统一宽高"，窗口要靠它决定自适应还是固定尺寸。
+            OnPropertyChanged(nameof(UsesUnifiedBoxSize));
+            OnPropertyChanged(nameof(HostBoxWidth));
+            OnPropertyChanged(nameof(HostBoxHeight));
+            OnPropertyChanged(nameof(HasUnifiedHeight));
         }
     }
 
