@@ -184,39 +184,34 @@ public sealed class DesktopBoxViewModel : ObservableObject
         UsesUnifiedBoxSize && double.IsFinite(_mappingListHeight) && _mappingListHeight > 0;
 
     /// <summary>
-    /// 合并宿主的统一外宽 = max(用户设定的映射盒宽度, 内容兜底宽度)，再夹在上下限之间，
-    /// 两种模式、各个标签共用它，切换模式/标签时不会变宽变窄。
-    /// 用户拖拽过宽度（或读取到已保存宽度）后，内容兜底失效 —— 宽度完全听用户的，
-    /// 否则会出现"盒子被强制撑得很宽、拖也拖不动"。
+    /// 合并宿主的统一外宽 = 用户设定的映射盒宽度（夹在上下限之间）。
+    /// 网格内容不再参与定宽：网格模式会按这个宽度自动决定列数并换行，
+    /// 所以在任何宽度下都不会裁切图标，也不会出现"内容把盒子撑宽"。
     /// </summary>
-    public double HostBoxWidth => CalculateHostBoxWidth(_mappingListWidth, ContentWidthFloor);
+    public double HostBoxWidth => Math.Clamp(
+        _mappingListWidth,
+        MinimumMappingListWidth,
+        MaximumMappingListWidth);
 
     /// <summary>
-    /// 网格内容宽度换算成盒子外宽的兜底值。
-    /// 两种情况不兜底：列表模式（列表自己适应宽度）、用户已设定过宽度。
+    /// 合并宿主网格模式下的列数：按盒子宽度算"能放下几列"，最多不超过条目数。
+    /// 盒子变窄自动换行、变宽自动铺开，列数永远填满宽度且不留空列。
+    /// 非合并宿主或列表模式返回 0（表示不参与）。
     /// </summary>
-    private double ContentWidthFloor => ResolveContentWidthFloor(
-        IsMappingListMode,
-        _hasCustomMappingListWidth,
-        GridCanvasWidth);
+    public int MergedGridColumns => UsesUnifiedBoxSize && !IsMappingListMode
+        ? CalculateMergedGridColumns(HostBoxWidth, LayoutSettings.ItemSlotWidth, Items.Count)
+        : 0;
 
-    internal static double ResolveContentWidthFloor(
-        bool isMappingListMode,
-        bool hasCustomWidth,
-        double gridCanvasWidth)
+    internal static int CalculateMergedGridColumns(double boxWidth, double slotWidth, int itemCount)
     {
-        if (isMappingListMode || hasCustomWidth || gridCanvasWidth <= 0)
+        if (itemCount <= 0 || slotWidth <= 0 || !double.IsFinite(boxWidth))
         {
             return 0;
         }
 
-        return gridCanvasWidth + MergedGridWidthChrome;
-    }
-
-    internal static double CalculateHostBoxWidth(double storedWidth, double contentFloorWidth)
-    {
-        var effective = Math.Max(storedWidth, contentFloorWidth);
-        return Math.Clamp(effective, MinimumMappingListWidth, MaximumMappingListWidth);
+        var usableWidth = Math.Max(slotWidth, boxWidth - MergedGridWidthChrome);
+        var columns = (int)Math.Floor(usableWidth / slotWidth);
+        return Math.Clamp(columns, 1, itemCount);
     }
     public double MappingListHeight => _mappingListHeight;
 
@@ -759,6 +754,8 @@ public sealed class DesktopBoxViewModel : ObservableObject
         ArchiveCompletedTodosCommand.NotifyCanExecuteChanged();
         HideDragPreview();
         UpdateItemIconSizes();
+        // 合并宿主网格：按当前标签的条目数与统一外宽重排列数。
+        ApplyMergedGridFlowLayout();
         // 画布范围按新标签的项目重算并通知 GridCanvasWidth/Height：
         // 虚拟化面板靠它决定显示哪些项，停留在旧范围会看不到新标签的图标。
         UpdateGridCanvasSize();
@@ -818,6 +815,9 @@ public sealed class DesktopBoxViewModel : ObservableObject
         IsActiveTab = true;
         OnPropertyChanged(nameof(TabVms));
         OnPropertyChanged(nameof(ActiveTabVm));
+        // 宿主自身就是第一个标签：初始化后按统一宽度重排一次网格，否则要等第一次切标签才生效。
+        ApplyMergedGridFlowLayout();
+        UpdateGridCanvasSize();
     }
 
     public void UpdateIconDisplayMetrics(double dpiScaleX, double dpiScaleY)
@@ -1108,6 +1108,8 @@ public sealed class DesktopBoxViewModel : ObservableObject
             }
 
             StatusText = Items.Count == 0 ? "拖入文件" : "已同步";
+            // 合并宿主：网格按盒子宽度决定列数（在持久化格位/排序结果之上做显示层重排）。
+            ApplyMergedGridFlowLayout();
             UpdateGridCanvasSize();
             OnPropertyChanged(nameof(ItemCountLabel));
             OnPropertyChanged(nameof(IsEmpty));
@@ -1836,11 +1838,61 @@ public sealed class DesktopBoxViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// 合并宿主网格里的拖拽落点：把条目移动到顺序中的目标下标，并按当前列数重排整排。
+    /// 与列表模式的重排一样，用"按顺序分配格位"的方式持久化，重启后顺序不变。
+    /// </summary>
+    private async Task ReorderMergedGridItemAsync(DrawerItemViewModel item, int targetIndex)
+    {
+        var originalOrder = Items.ToList();
+        var sourceIndex = originalOrder.FindIndex(candidate => candidate.Id == item.Id);
+        if (sourceIndex < 0)
+        {
+            return;
+        }
+
+        var reordered = originalOrder.ToList();
+        reordered.RemoveAt(sourceIndex);
+        targetIndex = Math.Clamp(targetIndex, 0, reordered.Count);
+        reordered.Insert(targetIndex, item);
+        if (originalOrder.Select(candidate => candidate.Id)
+            .SequenceEqual(reordered.Select(candidate => candidate.Id)))
+        {
+            return;
+        }
+
+        var columns = Math.Max(1, MergedGridColumns);
+        var positions = new Dictionary<Guid, (int Column, int Row)>(reordered.Count);
+        for (var index = 0; index < reordered.Count; index++)
+        {
+            positions[reordered[index].Id] = (index % columns, index / columns);
+        }
+
+        await _drawerService.UpdateItemGridPositionsAsync(positions);
+        foreach (var candidate in reordered)
+        {
+            var position = positions[candidate.Id];
+            candidate.SetGridPosition(position.Column, position.Row, LayoutSettings);
+        }
+
+        Items.ReplaceAll(reordered);
+        UpdateGridCanvasSize();
+    }
+
     private async Task MoveItemWithinBoxAsync(DrawerItemViewModel item, int targetColumn, int targetRow)
     {
         var targetSlot = NormalizeGridSlot(targetColumn, targetRow);
         targetColumn = targetSlot.Column;
         targetRow = targetSlot.Row;
+
+        // 合并宿主：网格按宽度自动换行，视觉位置由"排列顺序"决定，
+        // 所以落点理解为"顺序中的第几个位置"，用重排而不是直接写格位。
+        var mergedColumns = MergedGridColumns;
+        if (mergedColumns > 0)
+        {
+            await ReorderMergedGridItemAsync(item, (targetRow * mergedColumns) + targetColumn);
+            return;
+        }
 
         if (item.GridColumn == targetColumn && item.GridRow == targetRow)
         {
@@ -2068,21 +2120,41 @@ public sealed class DesktopBoxViewModel : ObservableObject
 
         OnPropertyChanged(nameof(DragPreviewWidth));
         OnPropertyChanged(nameof(DragPreviewHeight));
-
-        if (IsTabHost)
-        {
-            // 画布范围变了 → 统一外宽的内容兜底值也要重算（列表模式或用户设过宽度时兜底为 0）。
-            NotifyHostWidthChanged();
-        }
     }
 
     /// <summary>
-    /// 映射盒宽度变化（用户拖拽 / 读取设置 / 预设变化）后，统一宽度与列表视图宽度都要重算。
+    /// 映射盒宽度变化（用户拖拽 / 读取设置 / 预设变化）后：统一宽度、列表视图宽度、
+    /// 以及网格按宽度算出的列数都要重算，并按新列数重排网格（显示层，不写库）。
     /// </summary>
     private void NotifyHostWidthChanged()
     {
         OnPropertyChanged(nameof(HostBoxWidth));
         OnPropertyChanged(nameof(MappingListViewWidth));
+        OnPropertyChanged(nameof(MergedGridColumns));
+        ApplyMergedGridFlowLayout();
+        UpdateGridCanvasSize();
+    }
+
+    /// <summary>
+    /// 合并宿主网格模式：按"当前显示顺序"行优先排进"按盒子宽度算出的列数"里。
+    /// 只改显示（不写库），所以拖宽拖窄时图标会立即跟着换行/铺开。
+    /// </summary>
+    private void ApplyMergedGridFlowLayout()
+    {
+        var columns = MergedGridColumns;
+        if (columns <= 0)
+        {
+            return;
+        }
+
+        var ordered = Items
+            .OrderBy(item => item.GridRow)
+            .ThenBy(item => item.GridColumn)
+            .ToArray();
+        for (var index = 0; index < ordered.Length; index++)
+        {
+            ordered[index].SetGridPosition(index % columns, index / columns, LayoutSettings);
+        }
     }
 
     /// <summary>
