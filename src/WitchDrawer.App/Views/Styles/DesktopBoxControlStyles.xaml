@@ -49,14 +49,15 @@
     </Style>
 
     <!-- 多标签总盒子的标签卡（标题栏下方一行，列出全部已收纳的盒子）。
-         所有标签统一固定宽度，文字过长时省略号截断（悬停有完整名 ToolTip）；
-         文字必须 TextTrimming 截断，不能任其溢出，否则相邻标签文字会互相叠压。
+         宽度不写死在这里：由 ItemTemplate 里的多值绑定按「标签栏宽度 ÷ 标签数」算，
+         夹在 TabChipMetrics 的上下限之间（标签多到低于下限才横向滚动）。
+         文字过长时省略号截断（悬停有完整名 ToolTip）；必须 TextTrimming 截断，
+         不能任其溢出，否则相邻标签文字会互相叠压。
          底色只取盒子自身用到的那套画刷（GlassInnerBrush / HoverBrush / GlassStrokeBrush），
          它们会被盒子按「主题 + 盒子不透明度」重写进窗口资源，所以标签栏外观与盒子原本设置同步，
          不会出现与盒子表面不同材质的色块。
          选中项只做轻微高亮：盒子内面色 + 主题强调色文字 + 一圈细描边，不加粗、不换字重（避免文字抖动）。 -->
     <Style x:Key="TabChipButtonStyle" TargetType="{x:Type Button}">
-        <Setter Property="Width" Value="84" />
         <Setter Property="Height" Value="20" />
         <Setter Property="Padding" Value="6,0" />
         <Setter Property="Margin" Value="1,0" />

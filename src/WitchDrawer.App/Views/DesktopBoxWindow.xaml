@@ -53,6 +53,8 @@
                 <ResourceDictionary Source="/WitchDrawer.App;component/Views/Styles/DesktopBoxSelectionStyles.xaml" />
                 <ResourceDictionary Source="/WitchDrawer.App;component/Views/Styles/DesktopBoxControlStyles.xaml" />
             </ResourceDictionary.MergedDictionaries>
+            <!-- 标签卡宽度 = 标签栏宽度 ÷ 标签数（上下限见 TabChipMetrics）。 -->
+            <infrastructure:TabChipWidthConverter x:Key="TabChipWidthConverter" />
         </ResourceDictionary>
     </Window.Resources>
 
@@ -374,6 +376,16 @@
                                         CommandParameter="{Binding BoxId}"
                                         Style="{StaticResource TabChipButtonStyle}"
                                         ToolTip="{Binding TabLabel}">
+                                    <!-- 宽度 = 标签栏宽度 ÷ 标签数（结果夹在 TabChipMetrics 的上下限内）：
+                                         几个标签正好等分一行、宽度整齐；标签多到低于下限才横向滚动。 -->
+                                    <Button.Width>
+                                        <MultiBinding Converter="{StaticResource TabChipWidthConverter}">
+                                            <Binding Path="ActualWidth"
+                                                     RelativeSource="{RelativeSource AncestorType={x:Type Canvas}}" />
+                                            <Binding Path="DataContext.TabVms.Count"
+                                                     RelativeSource="{RelativeSource AncestorType={x:Type Window}}" />
+                                        </MultiBinding>
+                                    </Button.Width>
                                     <!-- 必须绑 TabLabel（盒子自身名字）：宿主的 Name 会跟随选中标签，
                                          用它会让第一格标签的文字跟着选中项一起变。 -->
                                     <TextBlock Text="{Binding TabLabel}"

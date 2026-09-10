@@ -342,21 +342,36 @@ public sealed class DesktopBoxWindowTemplateTests
 
         // 绑定名和 VM 属性名两侧一起锁住：改名会让 WPF 绑定静默失效，界面上表现为文字空白。
         Assert.NotNull(typeof(DesktopBoxViewModel).GetProperty("TabLabel"));
+
+        // 标签宽度由多值绑定算出：标签栏实际宽度 ÷ 标签数（上下限见 TabChipMetrics）。
+        var widthElement = Assert.Single(tabButton.Elements(PresentationNamespace + "Button.Width"));
+        var multiBinding = Assert.Single(widthElement.Elements(PresentationNamespace + "MultiBinding"));
+        Assert.Equal("{StaticResource TabChipWidthConverter}", (string?)multiBinding.Attribute("Converter"));
+        var widthBindings = multiBinding.Elements(PresentationNamespace + "Binding").ToArray();
+        Assert.Equal(2, widthBindings.Length);
+        Assert.Contains(widthBindings, binding => (string?)binding.Attribute("Path") == "ActualWidth");
+        Assert.Contains(
+            widthBindings,
+            binding => (string?)binding.Attribute("Path") == "DataContext.TabVms.Count");
+
+        // 转换器必须真的注册在窗口资源里，否则多值绑定会静默取不到值。
+        var converterElement = Assert.Single(
+            document.Descendants(XNamespace.Get("clr-namespace:WitchDrawer.App.Infrastructure") + "TabChipWidthConverter"));
+        Assert.Equal("TabChipWidthConverter", (string?)converterElement.Attribute(XamlNamespace + "Key"));
     }
 
     [Fact]
-    public void TabChipStyle_UsesFixedWidthAndFollowsTheActiveTheme()
+    public void TabChipStyle_LeavesWidthToTheScalingSchemeAndFollowsTheActiveTheme()
     {
         var style = Assert.Single(
             XDocument.Load(GetDesktopBoxControlStylesXamlPath())
                 .Descendants(PresentationNamespace + "Style"),
             element => (string?)element.Attribute(XamlNamespace + "Key") == "TabChipButtonStyle");
 
-        // 标签统一固定宽度：不能窄到名字看不清，也不能宽到一行放不下两个标签。
-        var widthSetter = Assert.Single(
+        // 宽度不能写死在样式里：改由 ItemTemplate 的多值绑定按「标签栏宽度 ÷ 标签数」计算。
+        Assert.DoesNotContain(
             style.Elements(PresentationNamespace + "Setter"),
             setter => (string?)setter.Attribute("Property") == "Width");
-        Assert.InRange(double.Parse((string)widthSetter.Attribute("Value")!), 48, 160);
         Assert.Contains(
             style.Elements(PresentationNamespace + "Setter"),
             setter => (string?)setter.Attribute("Property") == "Height"
