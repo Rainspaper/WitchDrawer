@@ -377,7 +377,8 @@
                                         Style="{StaticResource TabChipButtonStyle}"
                                         ToolTip="{Binding TabLabel}">
                                     <!-- 宽度 = 标签栏宽度 ÷ 标签数（结果夹在 TabChipMetrics 的上下限内）：
-                                         几个标签正好等分一行、宽度整齐；标签多到低于下限才横向滚动。 -->
+                                         盒子越窄标签越窄，整排标签始终放得下，不会把标签截掉；
+                                         名字过长按格宽截断，完整的看 ToolTip。 -->
                                     <Button.Width>
                                         <MultiBinding Converter="{StaticResource TabChipWidthConverter}">
                                             <Binding Path="ActualWidth"

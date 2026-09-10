@@ -50,7 +50,7 @@
 
     <!-- 多标签总盒子的标签卡（标题栏下方一行，列出全部已收纳的盒子）。
          宽度不写死在这里：由 ItemTemplate 里的多值绑定按「标签栏宽度 ÷ 标签数」算，
-         夹在 TabChipMetrics 的上下限之间（标签多到低于下限才横向滚动）。
+         夹在 TabChipMetrics 的上下限之间（盒子变窄时标签一起变窄，整排放得下、不截断）。
          文字过长时省略号截断（悬停有完整名 ToolTip）；必须 TextTrimming 截断，
          不能任其溢出，否则相邻标签文字会互相叠压。
          底色只取盒子自身用到的那套画刷（GlassInnerBrush / HoverBrush / GlassStrokeBrush），

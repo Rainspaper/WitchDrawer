@@ -11,19 +11,49 @@ public sealed class TabChipMetricsTests
 {
     [Theory]
     // 宿主盒 223 宽、3 个标签：(223-16)/3-2 = 67 → 等分后正好排满一行，不需要滚动。
-    [InlineData(223, 3, 67)]
-    // 5 个标签：(223-16)/5-2 = 39.4 → 低于下限，压到最小宽度后滚动。
-    [InlineData(223, 5, 56)]
+    [InlineData(223, 3, 67, 6)]
+    // 5 个标签：(223-16)/5-2 = 39.4 → 继续缩小以放下整排标签，而不是截断。
+    [InlineData(223, 5, 39.4, 6)]
+    // 盒子被拖窄到 100：(100-16)/3-2 = 26 → 标签跟着缩，三个都还在。
+    [InlineData(100, 3, 26, 6)]
     // 单个标签：不拉满整行，止步于上限。
-    [InlineData(223, 1, 120)]
+    [InlineData(223, 1, 120, 6)]
     // 宽盒子 2 个标签：(600-16)/2-2 = 290 → 同上限。
-    [InlineData(600, 2, 120)]
+    [InlineData(600, 2, 120, 6)]
     public void CalculateChipWidth_SplitsTheStripAndClampsToBounds(
         double stripWidth,
         int tabCount,
-        double expected)
+        double expected,
+        int precision)
     {
-        Assert.Equal(expected, TabChipMetrics.CalculateChipWidth(stripWidth, tabCount));
+        Assert.Equal(
+            expected,
+            TabChipMetrics.CalculateChipWidth(stripWidth, tabCount),
+            precision);
+    }
+
+    [Fact]
+    public void CalculateChipWidth_KeepsEveryTabInsideTheStripWhenTheBoxShrinks()
+    {
+        // 回归：盒子缩小后标签被截掉。只要还没有触到硬下限，
+        // 整排标签（含各自外边距）必须放得进标签栏可用宽度里。
+        foreach (var stripWidth in new[] { 60d, 80, 100, 140, 200, 223, 340, 600 })
+        {
+            for (var tabCount = 1; tabCount <= 6; tabCount++)
+            {
+                var chipWidth = TabChipMetrics.CalculateChipWidth(stripWidth, tabCount);
+                if (chipWidth <= TabChipMetrics.MinimumChipWidth)
+                {
+                    continue; // 已到硬下限，此时才允许溢出（横向滚动兜底）
+                }
+
+                var required = (chipWidth + TabChipMetrics.ChipHorizontalMargin) * tabCount;
+                var usable = stripWidth - TabChipMetrics.StripHorizontalInsets;
+                Assert.True(
+                    required <= usable + 0.001,
+                    $"{tabCount} 个标签在 {stripWidth} 宽的标签栏里需要 {required}，超过了可用宽度 {usable}。");
+            }
+        }
     }
 
     [Fact]
