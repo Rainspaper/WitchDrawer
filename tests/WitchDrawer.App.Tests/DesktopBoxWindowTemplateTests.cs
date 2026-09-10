@@ -269,9 +269,130 @@ public sealed class DesktopBoxWindowTemplateTests
             rootGrid.Descendants(PresentationNamespace + "Button"),
             element => (string?)element.Attribute("Click") == "OnToggleRollUpClick");
 
-        Assert.Equal("{Binding HeaderRowHeight}", (string?)definitions[0].Attribute("Height"));
-        Assert.Equal("{Binding ContentRowHeight}", (string?)definitions[1].Attribute("Height"));
+        Assert.Equal("{Binding TabBarRowHeight}", (string?)definitions[0].Attribute("Height"));
+        Assert.Equal("{Binding HeaderRowHeight}", (string?)definitions[1].Attribute("Height"));
+        Assert.Equal("{Binding ContentRowHeight}", (string?)definitions[2].Attribute("Height"));
         Assert.Equal("2", (string?)button.Attribute("Grid.Column"));
+    }
+
+    [Fact]
+    public void MergedTabHost_RendersTabsInADedicatedRowWithoutWideningTheBox()
+    {
+        // 合并为多标签总盒子后，标签文字曾经叠在一起：
+        // (1) Tab 栏与标题栏同处第 0 行 → 标签压住标题与关闭按钮；
+        // (2) 标签按钮直接继承 MappingModeButtonStyle 的 18×18 尺寸 → 文字溢出按钮互相覆盖。
+        // 这里把两条不变量固化下来。
+        var document = XDocument.Load(GetDesktopBoxWindowXamlPath());
+        var contentGrid = Assert.Single(
+            document.Descendants(PresentationNamespace + "Grid"),
+            element => (string?)element.Attribute(XamlNamespace + "Name") == "BoxContentGrid");
+
+        var tabStrip = Assert.Single(
+            contentGrid.Descendants(PresentationNamespace + "ItemsControl"),
+            element => (string?)element.Attribute(XamlNamespace + "Name") == "TabStrip");
+
+        // Tab 栏必须独占一行（第 0 行），标题栏在第 1 行，二者不再共享单元格。
+        var tabRow = Assert.Single(
+            tabStrip.Ancestors(PresentationNamespace + "Canvas"));
+        Assert.Equal("0", (string?)tabRow.Attribute("Grid.Row"));
+        Assert.Equal(
+            "{Binding IsTabHost, Converter={StaticResource BooleanToVisibilityConverter}}",
+            (string?)tabRow.Attribute("Visibility"));
+
+        var headerGrid = Assert.Single(
+            contentGrid.Elements(PresentationNamespace + "Grid"),
+            element => (string?)element.Attribute("Grid.Row") == "1");
+        Assert.Equal(
+            "{Binding IsHeaderVisible, Converter={StaticResource BooleanToVisibilityConverter}}",
+            (string?)headerGrid.Attribute("Visibility"));
+
+        // 标签条放在 Canvas 中：宽度不参与窗口测量，宿主盒子不会被标签撑宽。
+        var tabRowWidthBindings = tabRow.Elements()
+            .Select(element => (string?)element.Attribute("Width"))
+            .Where(value => value is not null)
+            .ToArray();
+        Assert.NotEmpty(tabRowWidthBindings);
+        Assert.All(
+            tabRowWidthBindings,
+            value =>
+            {
+                Assert.Contains("ActualWidth", value);
+                Assert.Contains("BoxContentGrid", value);
+            });
+
+        // 底衬与分隔线属于装饰层，不能吃掉鼠标事件，否则标签栏区域拖不动盒子。
+        var decorations = tabRow.Elements(PresentationNamespace + "Rectangle").ToArray();
+        Assert.NotEmpty(decorations);
+        Assert.All(
+            decorations,
+            decoration => Assert.Equal("False", (string?)decoration.Attribute("IsHitTestVisible")));
+
+        // 标签按钮自带 TabChipButtonStyle（不再是 18×18 的图标按钮样式），尺寸随文字自适应。
+        var tabButton = Assert.Single(
+            contentGrid.Descendants(PresentationNamespace + "Button"),
+            element => (string?)element.Attribute("Click") == "OnTabButtonClick");
+        Assert.Equal("{StaticResource TabChipButtonStyle}", (string?)tabButton.Attribute("Style"));
+        Assert.Null(tabButton.Attribute("Width"));
+        Assert.Null(tabButton.Attribute("Height"));
+    }
+
+    [Fact]
+    public void TabChipStyle_AutoSizesToTextAndFollowsTheActiveTheme()
+    {
+        var style = Assert.Single(
+            XDocument.Load(GetDesktopBoxControlStylesXamlPath())
+                .Descendants(PresentationNamespace + "Style"),
+            element => (string?)element.Attribute(XamlNamespace + "Key") == "TabChipButtonStyle");
+
+        // 固定宽度是标签文字互相叠压的根因，这里必须不设 Width。
+        Assert.DoesNotContain(
+            style.Elements(PresentationNamespace + "Setter"),
+            setter => (string?)setter.Attribute("Property") == "Width");
+        Assert.Contains(
+            style.Elements(PresentationNamespace + "Setter"),
+            setter => (string?)setter.Attribute("Property") == "Height"
+                && !string.IsNullOrWhiteSpace((string?)setter.Attribute("Value")));
+        Assert.Contains(
+            style.Elements(PresentationNamespace + "Setter"),
+            setter => (string?)setter.Attribute("Property") == "Padding");
+
+        // 主题适配：默认文字色、活动态底色/文字色都必须是主题动态资源。
+        Assert.Contains(
+            style.Elements(PresentationNamespace + "Setter"),
+            setter => (string?)setter.Attribute("Property") == "Foreground"
+                && (string?)setter.Attribute("Value") == "{DynamicResource TextMutedBrush}");
+
+        var activeTrigger = Assert.Single(
+            style.Descendants(PresentationNamespace + "DataTrigger"),
+            element => (string?)element.Attribute("Binding") == "{Binding IsActiveTab}");
+        var activeSetters = activeTrigger.Elements(PresentationNamespace + "Setter").ToArray();
+        Assert.Contains(
+            activeSetters,
+            setter => (string?)setter.Attribute("TargetName") == "Chip"
+                && (string?)setter.Attribute("Property") == "Background"
+                && (string?)setter.Attribute("Value") == "{DynamicResource AccentSoftBrush}");
+        Assert.Contains(
+            activeSetters,
+            setter => (string?)setter.Attribute("Property") == "Foreground"
+                && (string?)setter.Attribute("Value") == "{DynamicResource AccentBrush}");
+
+        var hoverTrigger = Assert.Single(
+            style.Descendants(PresentationNamespace + "Trigger"),
+            element => (string?)element.Attribute("Property") == "IsMouseOver");
+        Assert.Contains(
+            hoverTrigger.Elements(PresentationNamespace + "Setter"),
+            setter => (string?)setter.Attribute("Property") == "Foreground"
+                && (string?)setter.Attribute("Value") == "{DynamicResource TextPrimaryBrush}");
+
+        // 模板内多个触发器按声明顺序生效：活动态必须排在悬停之后才会生效。
+        var triggerNames = style.Descendants()
+            .Where(element => element.Name.LocalName is "Trigger" or "DataTrigger")
+            .Select(element => (string?)element.Attribute("Binding") ?? (string?)element.Attribute("Property"))
+            .ToArray();
+        Assert.True(
+            Array.IndexOf(triggerNames, "{Binding IsActiveTab}")
+                > Array.IndexOf(triggerNames, "IsMouseOver"),
+            "活动标签的触发器必须声明在悬停触发器之后。");
     }
 
     [Fact]
@@ -329,4 +450,19 @@ public sealed class DesktopBoxWindowTemplateTests
                 "Views",
                 "Styles",
                 "DesktopBoxSelectionStyles.xaml"));
+
+    private static string GetDesktopBoxControlStylesXamlPath() =>
+        Path.GetFullPath(
+            Path.Combine(
+                AppContext.BaseDirectory,
+                "..",
+                "..",
+                "..",
+                "..",
+                "..",
+                "src",
+                "WitchDrawer.App",
+                "Views",
+                "Styles",
+                "DesktopBoxControlStyles.xaml"));
 }

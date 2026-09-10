@@ -48,6 +48,63 @@
         </Setter>
     </Style>
 
+    <!-- 多标签总盒子的标签卡。
+         配色一律走主题动态资源，外观随「主题 + 盒子透明度」自动变化：
+         未选中=低调文字，悬停=中性底 + 正文色，选中=主题强调色底 + 强调色文字。
+         这里刻意不设 Width：标签必须按文字自适应，否则文字会溢出按钮边界互相叠压。 -->
+    <Style x:Key="TabChipButtonStyle" TargetType="{x:Type Button}">
+        <Setter Property="Height" Value="20" />
+        <Setter Property="Padding" Value="9,0" />
+        <Setter Property="Margin" Value="1,0" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{DynamicResource TextMutedBrush}" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type Button}">
+                    <Border x:Name="Chip"
+                            Background="{TemplateBinding Background}"
+                            CornerRadius="6"
+                            Padding="{TemplateBinding Padding}"
+                            SnapsToDevicePixels="True">
+                        <ContentPresenter HorizontalAlignment="Center"
+                                          VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <!-- 同一模板内多个触发器按声明顺序生效，后声明者优先：
+                             选中态放在最后，保证活动标签悬停时也不会丢掉强调色。 -->
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Chip"
+                                    Property="Background"
+                                    Value="{DynamicResource HoverBrush}" />
+                            <Setter Property="Foreground"
+                                    Value="{DynamicResource TextPrimaryBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter Property="Opacity" Value="0.72" />
+                        </Trigger>
+                        <DataTrigger Binding="{Binding IsActiveTab}" Value="True">
+                            <Setter TargetName="Chip"
+                                    Property="Background"
+                                    Value="{DynamicResource AccentSoftBrush}" />
+                            <Setter Property="Foreground"
+                                    Value="{DynamicResource AccentBrush}" />
+                            <Setter Property="FontWeight" Value="SemiBold" />
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding IsPixelStyle}" Value="True">
+                            <Setter TargetName="Chip" Property="CornerRadius" Value="4" />
+                        </DataTrigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style x:Key="TodoCompletionButtonStyle" TargetType="{x:Type Button}">
         <Setter Property="Width" Value="19" />
         <Setter Property="Height" Value="19" />

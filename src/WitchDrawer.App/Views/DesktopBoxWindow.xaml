@@ -74,6 +74,20 @@
                     <DataTrigger Binding="{Binding IsDragOver}" Value="True">
                         <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
                     </DataTrigger>
+                    <DataTrigger Binding="{Binding IsMergePreviewTarget, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
+                                Value="True">
+                        <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                        <Setter Property="BorderThickness" Value="2.5" />
+                        <Setter Property="Effect">
+                            <Setter.Value>
+                                <DropShadowEffect BlurRadius="16"
+                                                  Color="#000000"
+                                                  Opacity="0.30"
+                                                  ShadowDepth="2"
+                                                  Direction="270" />
+                            </Setter.Value>
+                        </Setter>
+                    </DataTrigger>
                     <DataTrigger Binding="{Binding IsPixelStyle}" Value="True">
                         <Setter Property="CornerRadius" Value="14" />
                         <Setter Property="TextElement.FontFamily" Value="Consolas, Courier New, 微软雅黑" />
@@ -88,15 +102,69 @@
             </Style>
         </Border.Style>
         
-        <Grid Background="Transparent" MouseLeftButtonDown="OnSurfaceMouseLeftButtonDown">
+        <Grid x:Name="BoxContentGrid" Background="Transparent" MouseLeftButtonDown="OnSurfaceMouseLeftButtonDown">
             <Grid.RowDefinitions>
+                <!-- Tab 栏独占一行：普通盒子行高为 0，单盒窗口布局与之前完全一致。 -->
+                <RowDefinition Height="{Binding TabBarRowHeight}" />
                 <RowDefinition Height="{Binding HeaderRowHeight}" />
                 <RowDefinition Height="{Binding ContentRowHeight}" />
             </Grid.RowDefinitions>
 
+            <!-- Tab 栏：仅多标签宿主窗口显示。每个按钮切换 ActiveTabVm。
+                 外层 Canvas 不参与父级测量，标签条宽度不会把宿主盒子撑宽；
+                 超出盒子可视宽度的标签可在标签条上滚动横向查看。
+                 底衬/分隔线必须 IsHitTestVisible=False，否则标签栏区域无法拖动盒子。 -->
+            <Canvas Grid.Row="0"
+                    Panel.ZIndex="6"
+                    ClipToBounds="True"
+                    Visibility="{Binding IsTabHost, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Rectangle Canvas.Left="0"
+                           Canvas.Top="0"
+                           Width="{Binding ActualWidth, ElementName=BoxContentGrid}"
+                           Height="{Binding TabBarRowHeight}"
+                           Fill="{DynamicResource GlassInnerBrush}"
+                           IsHitTestVisible="False"
+                           SnapsToDevicePixels="True" />
+                <ScrollViewer Canvas.Left="0"
+                              Canvas.Top="1"
+                              Width="{Binding ActualWidth, ElementName=BoxContentGrid}"
+                              HorizontalScrollBarVisibility="Hidden"
+                              VerticalScrollBarVisibility="Disabled">
+                    <ItemsControl x:Name="TabStrip"
+                                  Margin="8,0,8,0"
+                                  ItemsSource="{Binding TabVms}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Click="OnTabButtonClick"
+                                        CommandParameter="{Binding BoxId}"
+                                        Style="{StaticResource TabChipButtonStyle}"
+                                        ToolTip="{Binding Name}">
+                                    <TextBlock Text="{Binding Name}"
+                                               TextTrimming="CharacterEllipsis"
+                                               MaxWidth="86" />
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+                <Rectangle Canvas.Left="0"
+                           Canvas.Bottom="0"
+                           Width="{Binding ActualWidth, ElementName=BoxContentGrid}"
+                           Height="1"
+                           Fill="{DynamicResource GlassStrokeBrush}"
+                           Opacity="0.6"
+                           IsHitTestVisible="False"
+                           SnapsToDevicePixels="True" />
+            </Canvas>
+
             <!-- 顶部标题栏与 macOS 关闭小红点 -->
             <!-- 左侧名称 / 视图切换 / 卷起 / 关闭。 -->
-            <Grid Grid.Row="0"
+            <Grid Grid.Row="1"
                   Background="Transparent"
                   Visibility="{Binding IsHeaderVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <Grid.ColumnDefinitions>
@@ -330,7 +398,7 @@
 
             <!-- 主内容区: ListBox -->
             <ListBox x:Name="IconList"
-                     Grid.Row="1"
+                     Grid.Row="2"
                      Panel.ZIndex="1"
                      Margin="6,0,6,6"
                      Padding="2"
@@ -438,7 +506,7 @@
             </ListBox>
 
             <ListBox x:Name="FileList"
-                     Grid.Row="1"
+                     Grid.Row="2"
                      Panel.ZIndex="1"
                       Width="{Binding MappingListWidth}"
                       MinHeight="{Binding LayoutSettings.MappingListMinHeight}"
@@ -555,7 +623,7 @@
             </ListBox>
 
             <Canvas x:Name="MappingListDropOverlay"
-                    Grid.Row="1"
+                    Grid.Row="2"
                     Panel.ZIndex="11"
                     IsHitTestVisible="False"
                     Visibility="Collapsed">
@@ -568,17 +636,30 @@
             </Canvas>
 
             <Thumb x:Name="MappingListResizeThumb"
-                   Grid.RowSpan="2"
+                   Grid.RowSpan="3"
                    Panel.ZIndex="12"
                    Width="10"
                    Margin="0,5,-1,5"
                    HorizontalAlignment="Right"
                    VerticalAlignment="Stretch"
                    Cursor="SizeWE"
-                   Visibility="{Binding IsMappingListMode, Converter={StaticResource BooleanToVisibilityConverter}}"
                    DragStarted="OnMappingListResizeStarted"
                    DragDelta="OnMappingListResizeDelta"
                    DragCompleted="OnMappingListResizeCompleted">
+                <Thumb.Style>
+                    <Style TargetType="{x:Type Thumb}">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsMappingListMode}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsRolledUp}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Thumb.Style>
+
                 <Thumb.Template>
                     <ControlTemplate TargetType="{x:Type Thumb}">
                         <Grid Background="Transparent" />
@@ -586,30 +667,86 @@
                 </Thumb.Template>
             </Thumb>
             <Thumb x:Name="MappingListResizeHeightThumb"
-                   Grid.RowSpan="2"
+                   Grid.RowSpan="3"
                    Panel.ZIndex="12"
                    Height="10"
                    Margin="-1,0,5,0"
                    HorizontalAlignment="Stretch"
                    VerticalAlignment="Bottom"
                    Cursor="SizeNS"
-                   Visibility="{Binding IsMappingListMode, Converter={StaticResource BooleanToVisibilityConverter}}"
                    DragStarted="OnMappingListResizeHeightStarted"
                    DragDelta="OnMappingListResizeHeightDelta"
                    DragCompleted="OnMappingListResizeHeightCompleted">
+                <Thumb.Style>
+                    <Style TargetType="{x:Type Thumb}">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsMappingListMode}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsRolledUp}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Thumb.Style>
+
                 <Thumb.Template>
                     <ControlTemplate TargetType="{x:Type Thumb}">
                         <Grid Background="Transparent" />
                     </ControlTemplate>
                 </Thumb.Template>
             </Thumb>
+            <Thumb x:Name="MappingListResizeCornerThumb"
+                   Grid.RowSpan="3"
+                   Panel.ZIndex="13"
+                   Width="20"
+                   Height="20"
+                   HorizontalAlignment="Right"
+                   VerticalAlignment="Bottom"
+                   Margin="0,0,-8,-8"
+                   Cursor="SizeNWSE"
+                   Opacity="0.42"
+                   DragStarted="OnMappingListCornerResizeStarted"
+                   DragDelta="OnMappingListCornerResizeDelta"
+                   DragCompleted="OnMappingListCornerResizeCompleted">
+                <Thumb.Style>
+                    <Style TargetType="{x:Type Thumb}">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsMappingListMode}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsRolledUp}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Thumb.Style>
+
+                <Thumb.Template>
+                    <ControlTemplate TargetType="{x:Type Thumb}">
+                        <Grid Background="Transparent">
+                            <Path Data="M 5,15 L 15,5 M 10,15 L 15,10"
+                                  Stroke="{DynamicResource TextMutedBrush}"
+                                  StrokeThickness="1.4"
+                                  StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round" />
+                        </Grid>
+                    </ControlTemplate>
+                </Thumb.Template>
+            </Thumb>
+
 
             <!-- 待办收纳盒：与文件盒共用原生桌面浮窗外壳，但拥有独立的持久化内容。 -->
-            <Grid Grid.Row="1"
+            <Grid x:Name="TodoBoxRoot"
+                  Grid.Row="2"
                   Panel.ZIndex="3"
-                  Width="310"
+                  Width="{Binding TodoBoxWidth}"
+                  Height="{Binding TodoBoxHeight}"
+                  MinWidth="220"
                   MinHeight="190"
-                  MaxHeight="430"
+                  MaxHeight="800"
                   Margin="8,4,8,10"
                   HorizontalAlignment="Left"
                   VerticalAlignment="Top">
@@ -818,6 +955,68 @@
                         </ListBox.ItemTemplate>
                     </ListBox>
                 </Grid>
+            <Thumb x:Name="TodoBoxResizeWidthThumb"
+                   Grid.RowSpan="3"
+                   Panel.ZIndex="12"
+                   Width="10"
+                   Margin="0,5,-1,5"
+                   HorizontalAlignment="Right"
+                   VerticalAlignment="Stretch"
+                   Cursor="SizeWE"
+                   Visibility="{Binding IsTodoBox, Converter={StaticResource BooleanToVisibilityConverter}}"
+                   DragStarted="OnTodoBoxResizeStarted"
+                   DragDelta="OnTodoBoxResizeDelta"
+                   DragCompleted="OnTodoBoxResizeCompleted">
+                <Thumb.Template>
+                    <ControlTemplate TargetType="{x:Type Thumb}">
+                        <Grid Background="Transparent" />
+                    </ControlTemplate>
+                </Thumb.Template>
+            </Thumb>
+            <Thumb x:Name="TodoBoxResizeHeightThumb"
+                   Grid.RowSpan="3"
+                   Panel.ZIndex="12"
+                   Height="10"
+                   Margin="-1,0,5,0"
+                   HorizontalAlignment="Stretch"
+                   VerticalAlignment="Bottom"
+                   Cursor="SizeNS"
+                   Visibility="{Binding IsTodoBox, Converter={StaticResource BooleanToVisibilityConverter}}"
+                   DragStarted="OnTodoBoxResizeHeightStarted"
+                   DragDelta="OnTodoBoxResizeHeightDelta"
+                   DragCompleted="OnTodoBoxResizeHeightCompleted">
+                <Thumb.Template>
+                    <ControlTemplate TargetType="{x:Type Thumb}">
+                        <Grid Background="Transparent" />
+                    </ControlTemplate>
+                </Thumb.Template>
+            </Thumb>
+            <Thumb x:Name="TodoBoxResizeCornerThumb"
+                   Grid.RowSpan="3"
+                   Panel.ZIndex="13"
+                   Width="20"
+                   Height="20"
+                   HorizontalAlignment="Right"
+                   VerticalAlignment="Bottom"
+                   Margin="0,0,-8,-8"
+                   Cursor="SizeNWSE"
+                   Opacity="0.42"
+                   Visibility="{Binding IsTodoBox, Converter={StaticResource BooleanToVisibilityConverter}}"
+                   DragStarted="OnTodoBoxCornerResizeStarted"
+                   DragDelta="OnTodoBoxCornerResizeDelta"
+                   DragCompleted="OnTodoBoxCornerResizeCompleted">
+                <Thumb.Template>
+                    <ControlTemplate TargetType="{x:Type Thumb}">
+                        <Grid Background="Transparent">
+                            <Path Data="M 5,15 L 15,5 M 10,15 L 15,10"
+                                  Stroke="{DynamicResource TextMutedBrush}"
+                                  StrokeThickness="1.4"
+                                  StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round" />
+                        </Grid>
+                    </ControlTemplate>
+                </Thumb.Template>
+            </Thumb>
             </Grid>
 
             <Popup x:Name="DrawerSecondaryPopup"
@@ -955,7 +1154,7 @@
                 </Border>
             </Popup>
 
-            <Grid Grid.Row="1"
+            <Grid Grid.Row="2"
                   Panel.ZIndex="5"
                   Background="Transparent"
                   Width="{Binding DrawerCoverWidth}"
@@ -1184,7 +1383,7 @@
             </Grid>
 
             <Canvas x:Name="DragPreviewCanvas"
-                    Grid.Row="1"
+                    Grid.Row="2"
                     Panel.ZIndex="2"
                     Margin="8,2,8,8"
                     IsHitTestVisible="False"
@@ -1232,7 +1431,7 @@
             </Canvas>
 
             <!-- 空列表时: 拖拽投放槽 (跑马灯虚线动画) -->
-            <Border Grid.Row="1"
+            <Border Grid.Row="2"
                     Panel.ZIndex="0"
                     Background="Transparent"
                     VerticalAlignment="Stretch"

@@ -23,3 +23,8 @@ artifacts/
 # 本地视觉工具粘贴/产物目录，不入库
 .dsh-vision-toolkit/
 .dsh-vision-router/
+
+# 本地 AI 助手工作/会话目录，不入库
+.omo/
+.serena/
+.workbuddy/

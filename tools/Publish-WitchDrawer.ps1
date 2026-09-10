@@ -29,7 +29,11 @@ $installerShaPath = "$installerPath.sha256"
 
 New-Item -ItemType Directory -Path (Split-Path $publishDir) -Force | Out-Null
 if (Test-Path -LiteralPath $publishDir) {
-    Get-ChildItem -LiteralPath $publishDir -Force | Remove-Item -Recurse -Force
+    # Windows PowerShell 5.1 cannot bind pipeline objects to Remove-Item -LiteralPath
+    # (the LiteralPath parameter set accepts no pipeline input), so re-running the
+    # packaging against an existing version folder failed here. Delete item by item.
+    Get-ChildItem -LiteralPath $publishDir -Force |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force }
 }
 
 dotnet publish $projectPath --configuration $Configuration --runtime $RuntimeIdentifier --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true --output $publishDir

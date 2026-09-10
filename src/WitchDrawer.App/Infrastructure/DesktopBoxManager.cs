@@ -9,6 +9,7 @@ using WitchDrawer.App.ViewModels;
 using WitchDrawer.App.Views;
 using WitchDrawer.Core.Abstractions;
 using WitchDrawer.Core.Logging;
+using WitchDrawer.Core.Models;
 using WitchDrawer.Core.Services;
 using WitchDrawer.Native.Windows;
 
@@ -31,6 +32,7 @@ public sealed class DesktopBoxManager
     private readonly IAppLogger _logger;
     private readonly BoxVisualStyleStore _boxVisualStyleStore;
     private readonly BoxPositionLockStateStore _boxPositionLockStateStore;
+    private readonly BoxTabGroupService _tabGroupService;
     private readonly Dictionary<Guid, DesktopBoxWindow> _windows = [];
     private readonly ForegroundWindowMonitor _foregroundWindowMonitor;
     private readonly GlobalMouseButtonMonitor _mouseButtonMonitor;
@@ -54,6 +56,7 @@ public sealed class DesktopBoxManager
     private GuideLineWindow? _verticalGuide;
     private GuideLineWindow? _horizontalGuide;
     private bool _isAdjustingPosition;
+    private DesktopBoxWindow? _mergePreviewHost;
 
     public DesktopBoxManager(
         DrawerService drawerService,
@@ -62,6 +65,7 @@ public sealed class DesktopBoxManager
         IAppLogger logger,
         BoxVisualStyleStore boxVisualStyleStore,
         BoxPositionLockStateStore boxPositionLockStateStore,
+        BoxTabGroupService tabGroupService,
         Func<bool> isDesktopDoubleClickEnabled)
     {
         _drawerService = drawerService;
@@ -70,6 +74,7 @@ public sealed class DesktopBoxManager
         _logger = logger;
         _boxVisualStyleStore = boxVisualStyleStore;
         _boxPositionLockStateStore = boxPositionLockStateStore;
+        _tabGroupService = tabGroupService;
         _isDesktopDoubleClickEnabled = isDesktopDoubleClickEnabled;
         // 映射文件夹变化 -> 同步新项 -> 刷新对应盒子（实时自动识别）。
         _mappingFolderWatcher = new MappingFolderWatcher(
@@ -161,6 +166,11 @@ public sealed class DesktopBoxManager
                 win.PreviewMouseLeftButtonUp -= OnWindowMouseUp;
                 win.ForceClose();
                 _windows.Remove(removedId);
+                if (_mergePreviewHost is DesktopBoxWindow previewHost
+                    && previewHost.ViewModel.BoxId == removedId)
+                {
+                    _mergePreviewHost = null;
+                }
             }
 
             for (var index = 0; index < boxes.Count; index++)
@@ -171,6 +181,14 @@ public sealed class DesktopBoxManager
                 }
 
                 var box = boxes[index];
+
+                // 成员盒已合并进宿主盒作为标签页，不创建独立桌面窗口。
+                // 宿主盒自身正常创建窗口，随后在其窗口内承载各成员 VM。
+                if (await _tabGroupService.GetHostAsync(box.Id) is not null)
+                {
+                    continue;
+                }
+
                 var visualStyle = await _boxVisualStyleStore.LoadAsync(box);
                 var isPositionLocked =
                     await _boxPositionLockStateStore.LoadAsync(box.Id);
@@ -195,6 +213,7 @@ public sealed class DesktopBoxManager
                     await viewModel.LoadMappingViewModeAsync();
                     await viewModel.LoadMappingListWidthAsync();
                     await viewModel.LoadMappingListHeightAsync();
+                    await viewModel.LoadTodoBoxSizeAsync();
                     await viewModel.LoadDrawerStyleAsync();
                     // The persisted drawer height is snapped against the active row height.
                     // Load the file-name row first so a saved 4x4 cover stays 4x4 after restart.
@@ -255,12 +274,21 @@ public sealed class DesktopBoxManager
                     {
                         _overlapResolutionBoxIds.Add(box.Id);
                     }
+
+                    // 装载多标签成员：若该盒是 Tab 宿主，创建各成员 VM 并挂到宿主窗口。
+                    await InitializeTabMembersAsync(window, box);
                 }
                 else
                 {
                     window.ViewModel.UpdateBox(box, visualStyle);
                     await window.ViewModel.LoadDrawerStyleAsync();
                     window.SetPositionLocked(isPositionLocked);
+
+                    // 宿主窗口已存在时仍需同步成员 VM 列表（盒子增删后）。
+                    if (window.ViewModel.IsTabHost || await _tabGroupService.IsHostAsync(box.Id))
+                    {
+                        await InitializeTabMembersAsync(window, box);
+                    }
                 }
 
                 window.SetDesktopForeground(_desktopIsForeground);
@@ -580,6 +608,51 @@ public sealed class DesktopBoxManager
         ArgumentNullException.ThrowIfNull(windows);
         ArgumentNullException.ThrowIfNull(isVisible);
         return windows.Where(window => !isVisible(window)).ToArray();
+    }
+
+    /// <summary>
+    /// 把成员盒合并进宿主盒：持久化宿主/成员关系，隐藏成员的独立桌面窗口，
+    /// 刷新宿主窗口使其重新装载各成员标签页。
+    /// </summary>
+    public async Task MergeAsync(Guid memberId, Guid hostId)
+    {
+        if (_closing)
+        {
+            return;
+        }
+
+        await _tabGroupService.MergeAsync(memberId, hostId);
+        if (_windows.TryGetValue(memberId, out var memberWindow))
+        {
+            memberWindow.Hide();
+        }
+
+        await RefreshAsync();
+    }
+
+    /// <summary>
+    /// 解散盒的标签组：宿主盒则解散整组，成员盒则把自己从宿主移除，
+    /// 刷新相关窗口以恢复成员的独立桌面窗口。
+    /// </summary>
+    public async Task DissolveAsync(Guid boxId)
+    {
+        if (_closing)
+        {
+            return;
+        }
+
+        if (await _tabGroupService.GetHostAsync(boxId) is not null)
+        {
+            // 该盒是某组的成员：只把自己从宿主移除。
+            await _tabGroupService.RemoveMemberAsync(boxId);
+        }
+        else
+        {
+            // 该盒是宿主（或不是组成员）：整体解散组。
+            await _tabGroupService.DissolveAsync(boxId);
+        }
+
+        await RefreshAsync();
     }
 
     public async Task SavePositionAsync(Guid boxId)
@@ -1122,6 +1195,63 @@ public sealed class DesktopBoxManager
     }
 
     /// <summary>
+    /// 若该盒是 Tab 宿主，创建各成员盒的 ViewModel 并装载到宿主窗口。
+    /// 非宿主盒调用此方法是空操作。宿主自身的 VM 始终是第一个标签。
+    /// </summary>
+    private async Task InitializeTabMembersAsync(DesktopBoxWindow hostWindow, Box hostBox)
+    {
+        var memberIds = await _tabGroupService.GetMembersAsync(hostBox.Id);
+        if (memberIds.Count == 0)
+        {
+            hostWindow.ViewModel.IsTabHost = false;
+            return;
+        }
+
+        var boxes = await _drawerService.GetBoxesAsync();
+        var boxById = boxes.ToDictionary(b => b.Id);
+        var memberVms = new List<DesktopBoxViewModel>(memberIds.Count);
+        foreach (var memberId in memberIds)
+        {
+            if (!boxById.TryGetValue(memberId, out var memberBox))
+            {
+                continue;
+            }
+
+            var memberVisualStyle = await _boxVisualStyleStore.LoadAsync(memberBox);
+            var memberLayout = new DesktopBoxLayoutSettings(
+                memberBox.Type == WitchDrawer.Core.Models.BoxType.Drawer);
+            var savedPreset = await _drawerService.GetSettingAsync(
+                BoxViewModel.GetLayoutPresetSettingKey(memberId));
+            memberLayout.ApplyPresetWithoutCallback(savedPreset);
+
+            var memberVm = new DesktopBoxViewModel(
+                memberBox,
+                _drawerService,
+                _todoService,
+                _launcher,
+                _logger,
+                memberVisualStyle,
+                memberLayout);
+            await memberVm.LoadTitleVisibilityAsync();
+            await memberVm.LoadFileNameVisibilityAsync();
+            await memberVm.LoadMappingViewModeAsync();
+            await memberVm.LoadMappingListWidthAsync();
+            await memberVm.LoadMappingListHeightAsync();
+            await memberVm.LoadTodoBoxSizeAsync();
+            await memberVm.LoadDrawerStyleAsync();
+            await memberVm.LoadDrawerCoverSizeAsync();
+            await memberVm.LoadRollUpStateAsync();
+            await memberVm.LoadSortModeAsync();
+            await memberVm.LoadSizeModeAsync();
+            await memberVm.LoadAsync();
+            memberVms.Add(memberVm);
+        }
+
+        hostWindow.ViewModel.IsTabHost = true;
+        hostWindow.ViewModel.InitializeTabs(memberVms);
+    }
+
+    /// <summary>
     /// 恢复窗口位置。返回 <see langword="true"/> 表示该窗口需要参与重叠消解：
     /// 没有存档位置的新盒子（按级联位落位，可能压住已有盒子），或存档位置被
     /// 工作区钳制过（分辨率/显示器变化导致多个盒子挤到同一边缘）。原样还原的
@@ -1514,6 +1644,7 @@ public sealed class DesktopBoxManager
         try
         {
             PerformSnappingAndAlignment(draggedWindow, applySnap: false);
+            UpdateMergePreview(draggedWindow);
         }
         finally
         {
@@ -1678,12 +1809,102 @@ public sealed class DesktopBoxManager
     private void OnWindowMouseUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
         HideGuides();
-        if (sender is DesktopBoxWindow window)
+        if (sender is not DesktopBoxWindow window)
         {
+            ClearMergePreview();
+            return;
+        }
+
+        // 拖动中预览到某宿主盒：松手即把被拖盒合并为该宿主的标签。
+        if (_mergePreviewHost is DesktopBoxWindow hostWindow
+            && hostWindow != window)
+        {
+            var memberId = window.ViewModel.BoxId;
+            var hostId = hostWindow.ViewModel.BoxId;
+            ClearMergePreview();
             FireAndForget.Run(
-                SavePositionAsync(window.ViewModel.BoxId),
+                MergeAsync(memberId, hostId),
                 _logger,
-                $"Failed to save position for box {window.ViewModel.BoxId:N}.");
+                $"Failed to merge box {memberId:N} into host {hostId:N}.");
+            return;
+        }
+
+        FireAndForget.Run(
+            SavePositionAsync(window.ViewModel.BoxId),
+            _logger,
+            $"Failed to save position for box {window.ViewModel.BoxId:N}.");
+        ClearMergePreview();
+    }
+
+    /// <summary>
+    /// 拖动盒子的过程中更新"合并宿主预览"：若被拖盒中心落入某个可见盒子的
+    /// 可见边界内，把该盒子标记为合并宿主并高亮；否则清除高亮。
+    /// </summary>
+    private void UpdateMergePreview(DesktopBoxWindow draggedWindow)
+    {
+        var draggedBounds = draggedWindow.GetVisibleBoundsPixels();
+        if (draggedBounds.IsEmpty)
+        {
+            ClearMergePreview();
+            return;
+        }
+
+        var candidateId = FindMergePreviewCandidateId(
+            draggedBounds,
+            _windows.Values
+                .Where(w => w != draggedWindow && w.IsVisible)
+                .Select(w => (w.ViewModel.BoxId, w.GetVisibleBoundsPixels())));
+
+        DesktopBoxWindow? candidate = null;
+        if (candidateId is Guid id && _windows.TryGetValue(id, out var matched))
+        {
+            candidate = matched;
+        }
+
+        if (ReferenceEquals(candidate, _mergePreviewHost))
+        {
+            return;
+        }
+
+        ClearMergePreview();
+        if (candidate is not null)
+        {
+            _mergePreviewHost = candidate;
+            candidate.IsMergePreviewTarget = true;
+        }
+    }
+
+    /// <summary>
+    /// 纯函数：从候选盒子中找中心点落入其可见边界内的那个（作为合并宿主）。
+    /// 抽取出来便于单元测试。返回 null 表示无重叠目标。
+    /// </summary>
+    internal static Guid? FindMergePreviewCandidateId(
+        Rect draggedBounds,
+        IEnumerable<(Guid BoxId, Rect Bounds)> candidates)
+    {
+        var center = new Point(
+            draggedBounds.Left + draggedBounds.Width / 2.0,
+            draggedBounds.Top + draggedBounds.Height / 2.0);
+
+        foreach (var (boxId, bounds) in candidates)
+        {
+            if (bounds.IsEmpty || !bounds.Contains(center))
+            {
+                continue;
+            }
+
+            return boxId;
+        }
+
+        return null;
+    }
+
+    private void ClearMergePreview()
+    {
+        if (_mergePreviewHost is { } host)
+        {
+            host.IsMergePreviewTarget = false;
+            _mergePreviewHost = null;
         }
     }
 
@@ -1751,7 +1972,11 @@ public sealed class DesktopBoxManager
         double hCenterA = currentLeft + width / 2.0;
         double vCenterA = currentTop + height / 2.0;
         double? bestSnappedVisibleLeft = null;
+        int bestLeftPriority = int.MaxValue;
+        double bestLeftDistance = double.MaxValue;
         double? bestSnappedVisibleTop = null;
+        int bestTopPriority = int.MaxValue;
+        double bestTopDistance = double.MaxValue;
 
         var verticalGuideXs = new List<double>();
         double verticalGuideYMin = double.MaxValue;
@@ -1805,28 +2030,27 @@ public sealed class DesktopBoxManager
                 AddVerticalGuide(verticalGuideXs, ref verticalGuideYMin, ref verticalGuideYMax, hCenterB, currentTop, topB, bottomA, bottomB);
             }
 
-            // 1b. Vertical snap target (priority order preserved).
+            // 1b. Vertical snap target (nearest candidate wins, priority breaks ties).
             if (Math.Abs(currentLeft - leftB) <= snapThreshold)
             {
-                bestSnappedVisibleLeft = leftB;
+                TryUpdateSnapTarget(ref bestSnappedVisibleLeft, ref bestLeftPriority, ref bestLeftDistance, leftB, 1, currentLeft);
             }
-            else if (Math.Abs(rightA - rightB) <= snapThreshold)
+            if (Math.Abs(rightA - rightB) <= snapThreshold)
             {
-                bestSnappedVisibleLeft = rightB - width;
+                TryUpdateSnapTarget(ref bestSnappedVisibleLeft, ref bestLeftPriority, ref bestLeftDistance, rightB - width, 2, currentLeft);
             }
-            else if (Math.Abs(currentLeft - (rightB + tightGap)) <= snapThreshold)
+            if (Math.Abs(currentLeft - (rightB + tightGap)) <= snapThreshold)
             {
-                bestSnappedVisibleLeft = rightB + tightGap;
+                TryUpdateSnapTarget(ref bestSnappedVisibleLeft, ref bestLeftPriority, ref bestLeftDistance, rightB + tightGap, 3, currentLeft);
             }
-            else if (Math.Abs(rightA - (leftB - tightGap)) <= snapThreshold)
+            if (Math.Abs(rightA - (leftB - tightGap)) <= snapThreshold)
             {
-                bestSnappedVisibleLeft = leftB - tightGap - width;
+                TryUpdateSnapTarget(ref bestSnappedVisibleLeft, ref bestLeftPriority, ref bestLeftDistance, leftB - tightGap - width, 4, currentLeft);
             }
-            else if (Math.Abs(hCenterA - hCenterB) <= snapThreshold)
+            if (Math.Abs(hCenterA - hCenterB) <= snapThreshold)
             {
-                bestSnappedVisibleLeft = hCenterB - width / 2.0;
+                TryUpdateSnapTarget(ref bestSnappedVisibleLeft, ref bestLeftPriority, ref bestLeftDistance, hCenterB - width / 2.0, 5, currentLeft);
             }
-
             // 2. Horizontal snapping - collect every matching guide line.
             if (Math.Abs(currentTop - topB) <= snapThreshold)
             {
@@ -1849,29 +2073,28 @@ public sealed class DesktopBoxManager
                 AddHorizontalGuide(horizontalGuideYs, ref horizontalGuideXMin, ref horizontalGuideXMax, vCenterB, currentLeft, leftB, rightA, rightB);
             }
 
-            // 2b. Horizontal snap target (priority order preserved).
+            // 2b. Horizontal snap target (nearest candidate wins, priority breaks ties).
             if (Math.Abs(currentTop - topB) <= snapThreshold)
             {
-                bestSnappedVisibleTop = topB;
+                TryUpdateSnapTarget(ref bestSnappedVisibleTop, ref bestTopPriority, ref bestTopDistance, topB, 1, currentTop);
             }
-            else if (Math.Abs(bottomA - bottomB) <= snapThreshold)
+            if (Math.Abs(bottomA - bottomB) <= snapThreshold)
             {
-                bestSnappedVisibleTop = bottomB - height;
+                TryUpdateSnapTarget(ref bestSnappedVisibleTop, ref bestTopPriority, ref bestTopDistance, bottomB - height, 2, currentTop);
             }
-            else if (Math.Abs(currentTop - (bottomB + visualGap)) <= snapThreshold)
+            if (Math.Abs(currentTop - (bottomB + visualGap)) <= snapThreshold)
             {
-                bestSnappedVisibleTop = bottomB + visualGap;
+                TryUpdateSnapTarget(ref bestSnappedVisibleTop, ref bestTopPriority, ref bestTopDistance, bottomB + visualGap, 3, currentTop);
             }
-            else if (Math.Abs(bottomA - (topB - visualGap)) <= snapThreshold)
+            if (Math.Abs(bottomA - (topB - visualGap)) <= snapThreshold)
             {
-                bestSnappedVisibleTop = topB - visualGap - height;
+                TryUpdateSnapTarget(ref bestSnappedVisibleTop, ref bestTopPriority, ref bestTopDistance, topB - visualGap - height, 4, currentTop);
             }
-            else if (Math.Abs(vCenterA - vCenterB) <= snapThreshold)
+            if (Math.Abs(vCenterA - vCenterB) <= snapThreshold)
             {
-                bestSnappedVisibleTop = vCenterB - height / 2.0;
+                TryUpdateSnapTarget(ref bestSnappedVisibleTop, ref bestTopPriority, ref bestTopDistance, vCenterB - height / 2.0, 5, currentTop);
             }
         }
-
         if (applySnap)
         {
             if (bestSnappedVisibleLeft.HasValue || bestSnappedVisibleTop.HasValue)
@@ -1901,6 +2124,25 @@ public sealed class DesktopBoxManager
         }
     }
 
+
+    private static void TryUpdateSnapTarget(
+        ref double? bestTarget,
+        ref int bestPriority,
+        ref double bestDistance,
+        double target,
+        int priority,
+        double current)
+    {
+        var distance = Math.Abs(target - current);
+        if (!bestTarget.HasValue
+            || distance < bestDistance
+            || (distance == bestDistance && priority < bestPriority))
+        {
+            bestTarget = target;
+            bestPriority = priority;
+            bestDistance = distance;
+        }
+    }
     private static void AddVerticalGuide(
         List<double> guideXs,
         ref double yMin,

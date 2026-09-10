@@ -108,6 +108,8 @@ public partial class App : Application
             var boxVisualStyleStore = new BoxVisualStyleStore(drawerService, logger);
             var boxPositionLockStateStore =
                 new BoxPositionLockStateStore(drawerService, logger);
+            var boxTabGroupService =
+                new BoxTabGroupService(drawerService, logger);
             var storageLocationStore = StorageLocationStore.ForCurrentUser();
             var dataStorageMigrationService =
                 new DataStorageMigrationService(paths, repository, storageLocationStore);
@@ -144,6 +146,7 @@ public partial class App : Application
                 logger,
                 boxVisualStyleStore,
                 boxPositionLockStateStore,
+                boxTabGroupService,
                 () => mainViewModel.IsDesktopDoubleClickEnabled);
             _mainWindow = new MainWindow(
                 mainViewModel,
@@ -230,6 +233,16 @@ public partial class App : Application
                     logger);
             _mainWindow.DesktopShellRestarted += async (_, _) =>
                 await _desktopBoxManager.RecoverDesktopHostsAsync();
+            _mainWindow.MergeBoxRequested += async (_, e) =>
+                await GuardRefreshAsync(
+                    () => _desktopBoxManager.MergeAsync(e.MemberId, e.HostId),
+                    "MergeBoxAsync",
+                    logger);
+            _mainWindow.DissolveTabGroupRequested += async (_, boxId) =>
+                await GuardRefreshAsync(
+                    () => _desktopBoxManager.DissolveAsync(boxId),
+                    "DissolveTabGroupAsync",
+                    logger);
             mainViewModel.UpdateRequested += async (_, result) =>
             {
                 var versionText = $"v{result.LatestVersion.Major}.{result.LatestVersion.Minor}.{result.LatestVersion.Build}";

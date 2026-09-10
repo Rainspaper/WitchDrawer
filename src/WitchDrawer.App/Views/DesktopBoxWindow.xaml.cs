@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -15,6 +15,7 @@ using WitchDrawer.App.Features.ItemContextMenu;
 using WitchDrawer.App.Infrastructure;
 using WitchDrawer.App.Messages;
 using WitchDrawer.App.ViewModels;
+using WitchDrawer.Native.Shell;
 using WitchDrawer.Native.Windows;
 
 namespace WitchDrawer.App.Views;
@@ -27,6 +28,13 @@ public partial class DesktopBoxWindow : Window
 
     private static readonly HashSet<Guid> CompletedInternalDragIds = [];
     private static readonly HashSet<Guid> CompletedInternalItemIds = [];
+
+    private enum RollUpHoverPendingAction
+    {
+        None,
+        Expand,
+        Collapse,
+    }
     private bool _forceClose;
     private Point? _dragStartPoint;
     private DrawerItemViewModel? _dragStartItem;
@@ -38,6 +46,8 @@ public partial class DesktopBoxWindow : Window
     private Point? _mappingViewTransitionVisibleOriginPixels;
     private bool _isRollTransitioning;
     private bool _isRolledUpByHover;
+    private RollUpHoverPendingAction _rollUpHoverPending;
+    private DispatcherTimer? _rollUpHoverLeaverTimer;
     private bool _restoreAfterMinimizeQueued;
     private bool _desktopOwnershipRestoreQueued;
     private bool _desktopIsForeground;
@@ -51,6 +61,12 @@ public partial class DesktopBoxWindow : Window
     private NativePoint _mappingListResizeStartCursor;
     private double _mappingListResizeStartHeight;
     private NativePoint _mappingListResizeStartHeightCursor;
+    private double _todoBoxResizeStartWidth;
+    private double _todoBoxResizeStartHeight;
+    private NativePoint _todoBoxResizeStartCursor;
+    private NativePoint _todoBoxResizeStartHeightCursor;
+    private NativePoint _mappingListResizeStartCornerCursor;
+    private NativePoint _todoBoxResizeStartCornerCursor;
     private bool _suppressDrawerItemClick;
     private bool _isBoxOpacityRefreshQueued;
     private bool _suppressPopInOnLoad;
@@ -113,6 +129,36 @@ public partial class DesktopBoxWindow : Window
     }
 
     public DesktopBoxViewModel ViewModel => (DesktopBoxViewModel)DataContext;
+
+    /// <summary>拖拽本盒到另一盒上时，目标盒作为合并宿主被预览高亮。</summary>
+    public static readonly DependencyProperty IsMergePreviewTargetProperty =
+        DependencyProperty.Register(
+            nameof(IsMergePreviewTarget),
+            typeof(bool),
+            typeof(DesktopBoxWindow),
+            new PropertyMetadata(false));
+
+    public bool IsMergePreviewTarget
+    {
+        get => (bool)GetValue(IsMergePreviewTargetProperty);
+        set => SetValue(IsMergePreviewTargetProperty, value);
+    }
+
+    /// <summary>
+    /// 点击标签按钮：把宿主窗口的 ActiveTabVm 切换到对应标签 VM。
+    /// </summary>
+    private void OnTabButtonClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { CommandParameter: Guid tabBoxId }
+            && ViewModel is { IsTabHost: true } vm)
+        {
+            var target = vm.TabVms.FirstOrDefault(t => t.BoxId == tabBoxId);
+            if (target is not null)
+            {
+                vm.ActiveTabVm = target;
+            }
+        }
+    }
 
     private void SendToBottom()
     {
@@ -802,6 +848,174 @@ public partial class DesktopBoxWindow : Window
     }
 
 
+
+    private void OnMappingListCornerResizeStarted(object sender, DragStartedEventArgs e)
+    {
+        _mappingListResizeStartWidth = double.IsNaN(ViewModel.MappingListWidth)
+            ? FileList.ActualWidth
+            : ViewModel.MappingListWidth;
+        _mappingListResizeStartHeight = double.IsNaN(ViewModel.MappingListHeight)
+            ? FileList.ActualHeight
+            : ViewModel.MappingListHeight;
+        GetCursorPos(out _mappingListResizeStartCornerCursor);
+        e.Handled = true;
+    }
+
+    private void OnMappingListCornerResizeDelta(object sender, DragDeltaEventArgs e)
+    {
+        if (!GetCursorPos(out var currentCursor))
+        {
+            return;
+        }
+
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var horizontalDelta = currentCursor.X - _mappingListResizeStartCornerCursor.X;
+        var verticalDelta = currentCursor.Y - _mappingListResizeStartCornerCursor.Y;
+        ViewModel.ResizeMappingListWidth(
+            _mappingListResizeStartWidth
+            + (horizontalDelta / Math.Max(0.1, dpi.DpiScaleX)));
+        ViewModel.ResizeMappingListHeight(
+            _mappingListResizeStartHeight
+            + (verticalDelta / Math.Max(0.1, dpi.DpiScaleY)));
+        e.Handled = true;
+    }
+
+    private async void OnMappingListCornerResizeCompleted(object sender, DragCompletedEventArgs e)
+    {
+        if (e.Canceled)
+        {
+            ViewModel.ResizeMappingListWidth(_mappingListResizeStartWidth);
+            ViewModel.ResizeMappingListHeight(_mappingListResizeStartHeight);
+            e.Handled = true;
+            return;
+        }
+
+        await ViewModel.SaveMappingListWidthAsync();
+        await ViewModel.SaveMappingListHeightAsync();
+        e.Handled = true;
+    }
+
+
+    private void OnTodoBoxResizeStarted(object sender, DragStartedEventArgs e)
+    {
+        _todoBoxResizeStartWidth = double.IsNaN(ViewModel.TodoBoxWidth)
+            ? TodoBoxRoot.ActualWidth
+            : ViewModel.TodoBoxWidth;
+        GetCursorPos(out _todoBoxResizeStartCursor);
+        e.Handled = true;
+    }
+
+    private void OnTodoBoxResizeDelta(object sender, DragDeltaEventArgs e)
+    {
+        if (!GetCursorPos(out var currentCursor))
+        {
+            return;
+        }
+
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var horizontalDelta = currentCursor.X - _todoBoxResizeStartCursor.X;
+        ViewModel.ResizeTodoBoxWidth(
+            _todoBoxResizeStartWidth
+            + (horizontalDelta / Math.Max(0.1, dpi.DpiScaleX)));
+        e.Handled = true;
+    }
+
+    private async void OnTodoBoxResizeCompleted(object sender, DragCompletedEventArgs e)
+    {
+        if (e.Canceled)
+        {
+            ViewModel.ResizeTodoBoxWidth(_todoBoxResizeStartWidth);
+            e.Handled = true;
+            return;
+        }
+
+        await ViewModel.SaveTodoBoxSizeAsync();
+        e.Handled = true;
+    }
+
+    private void OnTodoBoxResizeHeightStarted(object sender, DragStartedEventArgs e)
+    {
+        _todoBoxResizeStartHeight = double.IsNaN(ViewModel.TodoBoxHeight)
+            ? TodoBoxRoot.ActualHeight
+            : ViewModel.TodoBoxHeight;
+        GetCursorPos(out _todoBoxResizeStartHeightCursor);
+        e.Handled = true;
+    }
+
+    private void OnTodoBoxResizeHeightDelta(object sender, DragDeltaEventArgs e)
+    {
+        if (!GetCursorPos(out var currentCursor))
+        {
+            return;
+        }
+
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var verticalDelta = currentCursor.Y - _todoBoxResizeStartHeightCursor.Y;
+        ViewModel.ResizeTodoBoxHeight(
+            _todoBoxResizeStartHeight
+            + (verticalDelta / Math.Max(0.1, dpi.DpiScaleY)));
+        e.Handled = true;
+    }
+
+    private async void OnTodoBoxResizeHeightCompleted(object sender, DragCompletedEventArgs e)
+    {
+        if (e.Canceled)
+        {
+            ViewModel.ResizeTodoBoxHeight(_todoBoxResizeStartHeight);
+            e.Handled = true;
+            return;
+        }
+
+        await ViewModel.SaveTodoBoxSizeAsync();
+        e.Handled = true;
+    }
+    private void OnTodoBoxCornerResizeStarted(object sender, DragStartedEventArgs e)
+    {
+        _todoBoxResizeStartWidth = double.IsNaN(ViewModel.TodoBoxWidth)
+            ? TodoBoxRoot.ActualWidth
+            : ViewModel.TodoBoxWidth;
+        _todoBoxResizeStartHeight = double.IsNaN(ViewModel.TodoBoxHeight)
+            ? TodoBoxRoot.ActualHeight
+            : ViewModel.TodoBoxHeight;
+        GetCursorPos(out _todoBoxResizeStartCornerCursor);
+        e.Handled = true;
+    }
+
+    private void OnTodoBoxCornerResizeDelta(object sender, DragDeltaEventArgs e)
+    {
+        if (!GetCursorPos(out var currentCursor))
+        {
+            return;
+        }
+
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var horizontalDelta = currentCursor.X - _todoBoxResizeStartCornerCursor.X;
+        var verticalDelta = currentCursor.Y - _todoBoxResizeStartCornerCursor.Y;
+        ViewModel.ResizeTodoBoxWidth(
+            _todoBoxResizeStartWidth
+            + (horizontalDelta / Math.Max(0.1, dpi.DpiScaleX)));
+        ViewModel.ResizeTodoBoxHeight(
+            _todoBoxResizeStartHeight
+            + (verticalDelta / Math.Max(0.1, dpi.DpiScaleY)));
+        e.Handled = true;
+    }
+
+    private async void OnTodoBoxCornerResizeCompleted(object sender, DragCompletedEventArgs e)
+    {
+        if (e.Canceled)
+        {
+            ViewModel.ResizeTodoBoxWidth(_todoBoxResizeStartWidth);
+            ViewModel.ResizeTodoBoxHeight(_todoBoxResizeStartHeight);
+            e.Handled = true;
+            return;
+        }
+
+        await ViewModel.SaveTodoBoxSizeAsync();
+        e.Handled = true;
+    }
+
+
+
     private void OnDrawerSurfacePreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (_isPositionLocked
@@ -986,6 +1200,7 @@ public partial class DesktopBoxWindow : Window
         Deactivated -= OnWindowDeactivated;
         StateChanged -= OnWindowStateChanged;
         PreviewMouseUp -= OnWindowPreviewMouseUpForDesktopOwnership;
+        StopRollUpHoverLeaverMonitor();
         _source?.RemoveHook(WindowMessageHook);
         _source = null;
         _nativeWindow = null;
@@ -1261,6 +1476,7 @@ public partial class DesktopBoxWindow : Window
         // If currently hover-expanded, pin to expanded instead of collapsing again.
         if (_isRolledUpByHover)
         {
+            StopRollUpHoverLeaverMonitor();
             _isRolledUpByHover = false;
             await ViewModel.SaveRollUpStateAsync();
             return;
@@ -1324,7 +1540,7 @@ public partial class DesktopBoxWindow : Window
         }
     }
 
-    private void OnRollUpHoverEnter(object sender, MouseEventArgs e)
+    private void OnRollUpHoverEnter(object sender, MouseEventArgs e) // x
     {
         if (!_isRolledUpByHover
             && ViewModel.RollUpHoverExpandEnabled
@@ -1333,6 +1549,7 @@ public partial class DesktopBoxWindow : Window
             && !_isMappingViewTransitioning)
         {
             _isRolledUpByHover = true;
+            StartRollUpHoverLeaverMonitor();
             _ = SetRolledUpWithAnimationAsync(rollUp: false);
         }
     }
@@ -1343,9 +1560,68 @@ public partial class DesktopBoxWindow : Window
             && !_isRollTransitioning
             && !_isMappingViewTransitioning)
         {
+            StopRollUpHoverLeaverMonitor();
             _isRolledUpByHover = false;
             _ = SetRolledUpWithAnimationAsync(rollUp: true);
         }
+    }
+
+    /// <summary>
+    /// MouseLeave on a transparent window is unreliable: when the roll-up expansion
+    /// animation grows the window under the cursor, the cursor stays "inside" the
+    /// window and the leave event never fires, so the box can remain hover-expanded
+    /// after the mouse moves away. Poll the real OS cursor position against the
+    /// window handle and collapse as soon as the cursor is no longer over this box.
+    /// The poll runs only while a hover-expansion is in flight, so the idle CPU cost
+    /// is zero.
+    /// </summary>
+    private void StartRollUpHoverLeaverMonitor()
+    {
+        if (_rollUpHoverLeaverTimer is null)
+        {
+            _rollUpHoverLeaverTimer = new DispatcherTimer(
+                TimeSpan.FromMilliseconds(60),
+                DispatcherPriority.Background,
+                OnRollUpHoverLeaverTick,
+                Dispatcher);
+        }
+
+        _rollUpHoverLeaverTimer.Start();
+    }
+
+    private void StopRollUpHoverLeaverMonitor()
+    {
+        _rollUpHoverLeaverTimer?.Stop();
+    }
+
+    private void OnRollUpHoverLeaverTick(object? sender, EventArgs e)
+    {
+        if (!_isRolledUpByHover
+            || _isRollTransitioning
+            || _isMappingViewTransitioning
+            || _nativeWindow is null
+            || !RollUpHoverCursorHasExited())
+        {
+            return;
+        }
+
+        StopRollUpHoverLeaverMonitor();
+        _isRolledUpByHover = false;
+        _ = SetRolledUpWithAnimationAsync(rollUp: true);
+    }
+
+    /// <summary>
+    /// True when the OS cursor is no longer over this window's hit-testable area.
+    /// </summary>
+    private bool RollUpHoverCursorHasExited()
+    {
+        if (!NativeCursor.TryGetPosition(out var screenX, out var screenY))
+        {
+            return false;
+        }
+
+        var hitHandle = GlobalMouseButtonMonitor.HitTestWindowHandle(screenX, screenY);
+        return hitHandle != _nativeWindow!.Handle;
     }
 
     private async Task RefreshGridLayoutAfterRollTransitionAsync()

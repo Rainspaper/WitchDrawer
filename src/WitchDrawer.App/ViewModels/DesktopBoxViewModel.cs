@@ -29,6 +29,13 @@ public sealed class DesktopBoxViewModel : ObservableObject
     private const double EdgeExpandThreshold = 14;
     private const double VisibleHeaderRowHeight = 24;
     private const double HiddenGridContentInset = 6;
+
+    /// <summary>
+    /// 多标签宿主顶部 Tab 栏占用的行高。宿主窗口把 Tab 栏放在标题栏之上的独立行里，
+    /// 否则标签文字会与标题、关闭按钮叠在同一行上互相覆盖。
+    /// </summary>
+    internal const double VisibleTabBarRowHeight = 22;
+
     private const string MappingViewModeSettingPrefix = "MappingViewMode:";
     private const string MappingListWidthSettingPrefix = "MappingListWidth:";
     private const string MappingListHeightSettingPrefix = "MappingListHeight:";
@@ -48,6 +55,13 @@ public sealed class DesktopBoxViewModel : ObservableObject
     private const double DrawerTitleHeightCompensation = 9;
     internal const double MinimumMappingListWidth = 180;
     internal const double MaximumMappingListWidth = 720;
+    internal const double DefaultTodoBoxWidth = 310;
+    internal const double MinimumTodoBoxWidth = 220;
+    internal const double MaximumTodoBoxWidth = 720;
+    internal const double MinimumTodoBoxHeight = 190;
+    internal const double MaximumTodoBoxHeight = 800;
+    private const string TodoBoxWidthSettingPrefix = "TodoBoxWidth:";
+    private const string TodoBoxHeightSettingPrefix = "TodoBoxHeight:";
 
     private readonly DrawerService _drawerService;
     private readonly TodoService _todoService;
@@ -76,6 +90,8 @@ public sealed class DesktopBoxViewModel : ObservableObject
     private bool _hasCustomMappingListWidth;
     private double _mappingListHeight = double.NaN;
     private bool _hasCustomMappingListHeight;
+    private double _todoBoxWidth = DefaultTodoBoxWidth;
+    private double _todoBoxHeight = double.NaN;
     private string _newTodoTitle = string.Empty;
     private double _iconDpiScaleX = 1;
     private double _iconDpiScaleY = 1;
@@ -134,6 +150,9 @@ public sealed class DesktopBoxViewModel : ObservableObject
     public double MappingListWidth => _mappingListWidth;
     public double MappingListHeight => _mappingListHeight;
 
+    public double TodoBoxWidth => _todoBoxWidth;
+    public double TodoBoxHeight => _todoBoxHeight;
+
     /// <summary>供窗口层包装 fire-and-forget 任务时记录异常。</summary>
     internal IAppLogger Logger => _logger;
 
@@ -156,7 +175,16 @@ public sealed class DesktopBoxViewModel : ObservableObject
 
     public event EventHandler? ItemsChanged;
 
-    public ResettableObservableCollection<DrawerItemViewModel> Items { get; } = [];
+    private readonly ResettableObservableCollection<DrawerItemViewModel> _items = [];
+
+    /// <summary>
+    /// 当前标签的项目集合。非宿主时返回自身集合；Tab 宿主时返回 ActiveTabVm 的集合。
+    /// 切换标签时触发 PropertyChanged 让 ItemsSource 重新绑定。
+    /// </summary>
+    public ResettableObservableCollection<DrawerItemViewModel> Items =>
+        _isTabHost && _activeTabVm is not null && !ReferenceEquals(_activeTabVm, this)
+            ? _activeTabVm._items
+            : _items;
 
     public ObservableCollection<DrawerItemViewModel> DrawerPreviewItems { get; } = [];
 
@@ -164,7 +192,13 @@ public sealed class DesktopBoxViewModel : ObservableObject
 
     public ResettableObservableCollection<DrawerItemViewModel> DrawerSecondaryItems { get; } = [];
 
-    public ObservableCollection<TodoItemViewModel> TodoItems { get; } = [];
+    private readonly ObservableCollection<TodoItemViewModel> _todoItems = [];
+
+    /// <summary>当前标签的待办集合。Tab 宿主时代理到 ActiveTabVm。</summary>
+    public ObservableCollection<TodoItemViewModel> TodoItems =>
+        _isTabHost && _activeTabVm is not null && !ReferenceEquals(_activeTabVm, this)
+            ? _activeTabVm._todoItems
+            : _todoItems;
 
     public IAsyncRelayCommand<DrawerItemViewModel?> OpenItemCommand { get; }
 
@@ -186,19 +220,25 @@ public sealed class DesktopBoxViewModel : ObservableObject
 
     public Guid BoxId => _box.Id;
 
-    public string Name => _box.Name;
+    /// <summary>Tab 宿主模式下当前代理的标签 VM；非宿主或指向自身时为 null。</summary>
+    private DesktopBoxViewModel? ActiveTab =>
+        _isTabHost && _activeTabVm is not null && !ReferenceEquals(_activeTabVm, this)
+            ? _activeTabVm
+            : null;
 
-    public BoxType Type => _box.Type;
+    public string Name => ActiveTab?._box.Name ?? _box.Name;
 
-    public BoxVisualStyle VisualStyle => _visualStyle;
+    public BoxType Type => ActiveTab?._box.Type ?? _box.Type;
 
-    public bool IsPixelStyle => VisualStyle == BoxVisualStyle.Pixel;
+    public BoxVisualStyle VisualStyle => ActiveTab?._visualStyle ?? _visualStyle;
 
-    public bool IsMappingBox => Type == BoxType.Mapping;
+    public bool IsPixelStyle => (ActiveTab?.IsPixelStyle ?? VisualStyle == BoxVisualStyle.Pixel);
 
-    public bool IsTodoBox => Type == BoxType.Todo;
+    public bool IsMappingBox => (ActiveTab?._box.Type ?? _box.Type) == BoxType.Mapping;
 
-    public bool IsDrawerBox => Type == BoxType.Drawer;
+    public bool IsTodoBox => (ActiveTab?._box.Type ?? _box.Type) == BoxType.Todo;
+
+    public bool IsDrawerBox => (ActiveTab?._box.Type ?? _box.Type) == BoxType.Drawer;
 
     /// <summary>
     /// 是否使用抽屉式收纳：抽屉盒恒为真；普通/像素/映射盒仅在全局
@@ -290,7 +330,13 @@ public sealed class DesktopBoxViewModel : ObservableObject
         IsDrawerBox,
         IsMappingListMode,
         LayoutSettings.MappingListMargin.Top,
-        LayoutSettings.MappingListMargin.Bottom);
+        LayoutSettings.MappingListMargin.Bottom) + TabBarRowHeight;
+
+    /// <summary>
+    /// Tab 栏占用的行高：宿主时为固定行高，其余情况为 0，单盒窗口布局与修复前完全一致。
+    /// 宽度由 XAML 中的行定义绑定，HeaderRowHeight 已把这段高度计入标题区。
+    /// </summary>
+    public double TabBarRowHeight => CalculateTabBarRowHeight(IsTabHost);
 
     public double DrawerCoverWidth => _drawerCoverWidth;
 
@@ -396,6 +442,10 @@ public sealed class DesktopBoxViewModel : ObservableObject
         bool isRolledUp) =>
         isRolledUp || isTitleVisible || (isDrawerBox && isDrawerExpanded);
 
+    /// <summary>
+    /// 标题区行高（不含 Tab 栏）：宿主窗口的 Tab 栏高度由
+    /// <see cref="CalculateTabBarRowHeight"/> 单独叠加。
+    /// </summary>
     internal static double CalculateHeaderRowHeight(
         bool isHeaderVisible,
         bool isDrawerBox,
@@ -417,6 +467,12 @@ public sealed class DesktopBoxViewModel : ObservableObject
             ? Math.Max(0, contentBottomMargin - contentTopMargin)
             : HiddenGridContentInset;
     }
+
+    /// <summary>
+    /// Tab 栏行高：仅多标签宿主占用高度，普通盒子返回 0（单盒窗口布局零改动）。
+    /// </summary>
+    internal static double CalculateTabBarRowHeight(bool isTabHost) =>
+        isTabHost ? VisibleTabBarRowHeight : 0;
 
     public string NewTodoTitle
     {
@@ -519,6 +575,113 @@ public sealed class DesktopBoxViewModel : ObservableObject
         AddTodoCommand.NotifyCanExecuteChanged();
         ArchiveCompletedTodosCommand.NotifyCanExecuteChanged();
         UpdateItemIconSizes();
+    }
+
+    // ── 多标签总盒子（Tab Host）──────────────────────────────────
+    // 宿主盒聚合多个成员盒作为标签页。ActiveTabVm 指向当前选中标签对应的 VM。
+    // 非宿主时 TabVms 仅含自身、ActiveTabVm == this，行为与单盒窗口完全一致。
+    private readonly ObservableCollection<DesktopBoxViewModel> _tabVms = [];
+    private DesktopBoxViewModel? _activeTabVm;
+    private bool _isTabHost;
+    private bool _isActiveTab;
+
+    /// <summary>标签页 VM 列表（含宿主自身作为第一个标签）。</summary>
+    public ObservableCollection<DesktopBoxViewModel> TabVms => _tabVms;
+
+    /// <summary>当前标签是否为宿主窗口中选中的活动标签（用于 Tab 栏高亮）。</summary>
+    public bool IsActiveTab
+    {
+        get => _isActiveTab;
+        set => SetProperty(ref _isActiveTab, value);
+    }
+
+    /// <summary>当前选中标签的 VM。非宿主时返回 this。</summary>
+    public DesktopBoxViewModel ActiveTabVm
+    {
+        get => _activeTabVm ?? this;
+        set
+        {
+            if (ReferenceEquals(_activeTabVm, value))
+            {
+                return;
+            }
+
+            var previous = _activeTabVm;
+            _activeTabVm = value;
+            OnPropertyChanged(nameof(ActiveTabVm));
+            // 维护 Tab 栏高亮：新活动标签点亮，旧活动标签熄灭。
+            if (previous is not null)
+            {
+                previous.IsActiveTab = false;
+            }
+
+            if (value is not null)
+            {
+                value.IsActiveTab = true;
+            }
+
+            // 通知所有重定向到 ActiveTabVm 的派生属性。
+            OnPropertyChanged(nameof(Items));
+            OnPropertyChanged(nameof(TodoItems));
+            OnPropertyChanged(nameof(IsMappingListMode));
+            OnPropertyChanged(nameof(IsMappingBox));
+            OnPropertyChanged(nameof(IsTodoBox));
+            OnPropertyChanged(nameof(IsDrawerBox));
+            OnPropertyChanged(nameof(MappingListWidth));
+            OnPropertyChanged(nameof(MappingListHeight));
+            OnPropertyChanged(nameof(TodoBoxWidth));
+            OnPropertyChanged(nameof(TodoBoxHeight));
+            OnPropertyChanged(nameof(Name));
+        }
+    }
+
+    /// <summary>是否作为多标签总盒子的宿主。</summary>
+    public bool IsTabHost
+    {
+        get => _isTabHost;
+        set
+        {
+            if (!SetProperty(ref _isTabHost, value))
+            {
+                return;
+            }
+
+            if (!value)
+            {
+                var previous = _activeTabVm;
+                _activeTabVm = null;
+                if (previous is not null)
+                {
+                    previous.IsActiveTab = false;
+                }
+
+                _tabVms.Clear();
+                OnPropertyChanged(nameof(ActiveTabVm));
+                OnPropertyChanged(nameof(TabVms));
+            }
+
+            // Tab 栏占用标题区一行高度，合并/解散后标题栏需要整体让位或收回。
+            OnPropertyChanged(nameof(TabBarRowHeight));
+            OnPropertyChanged(nameof(HeaderRowHeight));
+        }
+    }
+
+    /// <summary>
+    /// 初始化宿主的标签页 VM 列表。宿主自身始终是第一个标签。
+    /// </summary>
+    public void InitializeTabs(IReadOnlyList<DesktopBoxViewModel> memberVms)
+    {
+        _tabVms.Clear();
+        _tabVms.Add(this);
+        foreach (var vm in memberVms)
+        {
+            _tabVms.Add(vm);
+        }
+
+        _activeTabVm = this;
+        IsActiveTab = true;
+        OnPropertyChanged(nameof(TabVms));
+        OnPropertyChanged(nameof(ActiveTabVm));
     }
 
     public void UpdateIconDisplayMetrics(double dpiScaleX, double dpiScaleY)
@@ -1353,6 +1516,119 @@ public sealed class DesktopBoxViewModel : ObservableObject
             LayoutSettings.MappingListMaxHeight);
     }
 
+
+    public void ResizeTodoBoxWidth(double width)
+    {
+        if (!IsTodoBox)
+        {
+            return;
+        }
+
+        SetProperty(
+            ref _todoBoxWidth,
+            NormalizeTodoBoxWidth(width),
+            nameof(TodoBoxWidth));
+    }
+
+    public void ResizeTodoBoxHeight(double height)
+    {
+        if (!IsTodoBox)
+        {
+            return;
+        }
+
+        SetProperty(
+            ref _todoBoxHeight,
+            NormalizeTodoBoxHeight(height),
+            nameof(TodoBoxHeight));
+    }
+
+    public async Task LoadTodoBoxSizeAsync()
+    {
+        if (!IsTodoBox)
+        {
+            return;
+        }
+
+        try
+        {
+            var savedWidth = await _drawerService.GetSettingAsync(GetTodoBoxWidthSettingKey(BoxId));
+            if (double.TryParse(savedWidth, NumberStyles.Float, CultureInfo.InvariantCulture, out var width)
+                && double.IsFinite(width))
+            {
+                SetProperty(
+                    ref _todoBoxWidth,
+                    NormalizeTodoBoxWidth(width),
+                    nameof(TodoBoxWidth));
+            }
+            else
+            {
+                SetProperty(ref _todoBoxWidth, DefaultTodoBoxWidth, nameof(TodoBoxWidth));
+            }
+
+            var savedHeight = await _drawerService.GetSettingAsync(GetTodoBoxHeightSettingKey(BoxId));
+            if (double.TryParse(savedHeight, NumberStyles.Float, CultureInfo.InvariantCulture, out var height)
+                && double.IsFinite(height))
+            {
+                SetProperty(
+                    ref _todoBoxHeight,
+                    NormalizeTodoBoxHeight(height),
+                    nameof(TodoBoxHeight));
+            }
+            else
+            {
+                SetProperty(ref _todoBoxHeight, double.NaN, nameof(TodoBoxHeight));
+            }
+        }
+        catch (Exception exception)
+        {
+            _logger.Error(exception, "Failed to load todo box size.");
+        }
+    }
+
+    public async Task SaveTodoBoxSizeAsync()
+    {
+        if (!IsTodoBox)
+        {
+            return;
+        }
+
+        try
+        {
+            await _drawerService.SetSettingAsync(
+                GetTodoBoxWidthSettingKey(BoxId),
+                TodoBoxWidth.ToString("R", CultureInfo.InvariantCulture));
+
+            var heightValue = double.IsNaN(TodoBoxHeight)
+                ? "Auto"
+                : TodoBoxHeight.ToString("R", CultureInfo.InvariantCulture);
+            await _drawerService.SetSettingAsync(
+                GetTodoBoxHeightSettingKey(BoxId),
+                heightValue);
+        }
+        catch (Exception exception)
+        {
+            _logger.Error(exception, "Failed to save todo box size.");
+        }
+    }
+
+    internal static string GetTodoBoxWidthSettingKey(Guid boxId) =>
+        TodoBoxWidthSettingPrefix + boxId.ToString("N");
+
+    internal static string GetTodoBoxHeightSettingKey(Guid boxId) =>
+        TodoBoxHeightSettingPrefix + boxId.ToString("N");
+
+    private double NormalizeTodoBoxWidth(double width) =>
+        Math.Clamp(
+            double.IsFinite(width) ? width : DefaultTodoBoxWidth,
+            MinimumTodoBoxWidth,
+            MaximumTodoBoxWidth);
+
+    private double NormalizeTodoBoxHeight(double height) =>
+        Math.Clamp(
+            double.IsFinite(height) ? height : MinimumTodoBoxHeight,
+            MinimumTodoBoxHeight,
+            MaximumTodoBoxHeight);
     private async Task OpenItemAsync(DrawerItemViewModel? item)
     {
         if (item is null)

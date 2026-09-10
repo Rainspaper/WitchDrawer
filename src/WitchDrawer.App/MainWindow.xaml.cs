@@ -58,6 +58,12 @@ public partial class MainWindow : Window
     /// </summary>
     public event EventHandler<Guid>? ReopenBoxRequested;
 
+    /// <summary>用户请求把成员盒合并到宿主盒。参数=(成员盒 Id, 宿主盒 Id)。</summary>
+    public event EventHandler<(Guid MemberId, Guid HostId)>? MergeBoxRequested;
+
+    /// <summary>用户请求解散某个盒的标签组（参数=盒 Id，可为宿主或成员）。</summary>
+    public event EventHandler<Guid>? DissolveTabGroupRequested;
+
     internal MainWindow(
         MainViewModel viewModel,
         QuickPanelWindow quickPanel,
@@ -912,6 +918,76 @@ public partial class MainWindow : Window
         if (ViewModel.SelectedBox is { } box)
         {
             ReopenBoxRequested?.Invoke(this, box.Id);
+        }
+    }
+
+    /// <summary>
+    /// 合并到其他盒子：用简易选择对话框让用户从当前盒子列表中选一个目标宿主。
+    /// 不含自身（不能合并进自己）。
+    /// </summary>
+    private void OnMergeBoxClicked(object sender, RoutedEventArgs e)
+    {
+        BoxActionsPopup.IsOpen = false;
+        if (ViewModel.SelectedBox is not { } sourceBox)
+        {
+            return;
+        }
+
+        var candidates = ViewModel.Boxes
+            .Where(b => b.Id != sourceBox.Id)
+            .Select(b => $"{b.Name} ({b.TypeLabel})")
+            .ToArray();
+        if (candidates.Length == 0)
+        {
+            System.Windows.MessageBox.Show(
+                this,
+                "没有其他可合并的收纳盒。",
+                "合并到其他盒子",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        var choice = System.Windows.MessageBox.Show(
+            this,
+            $"将 \"{sourceBox.Name}\" 合并到其他盒子后，它会作为标签页显示在目标盒子窗口中，\n其独立窗口将被隐藏。可随时解散恢复。\n\n请在弹出的选择框中选择目标盒子。",
+            "合并到其他盒子",
+            MessageBoxButton.OKCancel,
+            MessageBoxImage.Question);
+
+        if (choice != MessageBoxResult.OK)
+        {
+            return;
+        }
+
+        // 简易输入：让用户输入目标盒序号。后续可升级为 Popup 列表选择。
+        var indexInput = InputBoxWindow.Show(
+            "输入目标盒子序号：\n" + string.Join("\n",
+                candidates.Select((name, i) => $"{i + 1}. {name}")),
+            "选择目标盒子",
+            defaultValue: "1");
+
+        if (!int.TryParse(indexInput, out var index) || index < 1 || index > candidates.Length)
+        {
+            System.Windows.MessageBox.Show(
+                this, "无效的序号，已取消合并。", "合并到其他盒子",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var targetBox = ViewModel.Boxes
+            .Where(b => b.Id != sourceBox.Id)
+            .ElementAt(index - 1);
+        MergeBoxRequested?.Invoke(this, (sourceBox.Id, targetBox.Id));
+    }
+
+    /// <summary>解散标签组：当前选中盒若是宿主或成员，移除其分组关系。</summary>
+    private void OnDissolveTabGroupClicked(object sender, RoutedEventArgs e)
+    {
+        BoxActionsPopup.IsOpen = false;
+        if (ViewModel.SelectedBox is { } box)
+        {
+            DissolveTabGroupRequested?.Invoke(this, box.Id);
         }
     }
 

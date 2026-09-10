@@ -900,6 +900,38 @@
                                                                        FontSize="12" />
                                                         </StackPanel>
                                                     </Button>
+                                                    <Button Click="OnMergeBoxClicked"
+                                                            Style="{StaticResource GhostButtonStyle}"
+                                                            AutomationProperties.Name="合并到其他盒子"
+                                                            Padding="10,8"
+                                                            HorizontalContentAlignment="Left">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="&#xE8A4;"
+                                                                        Width="20"
+                                                                        FontFamily="Segoe Fluent Icons"
+                                                                        FontSize="13"
+                                                                        Foreground="{DynamicResource TextMutedBrush}" />
+                                                            <TextBlock Text="合并到其他盒子"
+                                                                        Foreground="{DynamicResource TextPrimaryBrush}"
+                                                                        FontSize="12" />
+                                                        </StackPanel>
+                                                    </Button>
+                                                    <Button Click="OnDissolveTabGroupClicked"
+                                                            Style="{StaticResource GhostButtonStyle}"
+                                                            AutomationProperties.Name="解散标签组"
+                                                            Padding="10,8"
+                                                            HorizontalContentAlignment="Left">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="&#xE894;"
+                                                                        Width="20"
+                                                                        FontFamily="Segoe Fluent Icons"
+                                                                        FontSize="13"
+                                                                        Foreground="{DynamicResource TextMutedBrush}" />
+                                                            <TextBlock Text="解散标签组"
+                                                                        Foreground="{DynamicResource TextPrimaryBrush}"
+                                                                        FontSize="12" />
+                                                        </StackPanel>
+                                                    </Button>
                                                     <Border Height="1"
                                                             Margin="8,4"
                                                             Background="{DynamicResource BorderBrushSoft}" />

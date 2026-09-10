@@ -49,4 +49,22 @@ public sealed class DesktopBoxHeaderVisibilityTests
                 isTitleVisible,
                 isRolledUp));
     }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void CalculateTabBarRowHeight_OnlyReservesHeightForMergedHosts(bool isTabHost)
+    {
+        // 多标签宿主需要一行放 Tab 栏；普通盒子必须返回 0，否则单盒窗口会凭空多出一行。
+        Assert.Equal(
+            isTabHost ? DesktopBoxViewModel.VisibleTabBarRowHeight : 0,
+            DesktopBoxViewModel.CalculateTabBarRowHeight(isTabHost));
+    }
+
+    [Fact]
+    public void VisibleTabBarRowHeight_FitsAOneLineTabStrip()
+    {
+        // Tab 栏行高必须容得下 XAML 里 20px 高的标签按钮，且不能高得离谱（它只放一行标签）。
+        Assert.InRange(DesktopBoxViewModel.VisibleTabBarRowHeight, 20, 32);
+    }
 }
