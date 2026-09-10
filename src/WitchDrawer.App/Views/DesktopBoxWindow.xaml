@@ -347,15 +347,16 @@
 
             <!-- 标签栏：仅多标签宿主窗口显示，位于标题栏之下、内容区之上。
                  上面一行显示当前选中的盒子名，这一行列出全部已收纳的盒子标签。
+                 不画底衬与分隔线，靠行高留白与标题栏/内容区拉开距离。
                  外层 Canvas 不参与父级测量，标签条宽度不会把宿主盒子撑宽；
-                 超出盒子可视宽度的标签可在标签条上滚动横向查看。
-                 分隔线属于装饰层，必须 IsHitTestVisible=False，否则会吃掉拖动盒子的事件。 -->
+                 超出盒子可视宽度的标签可在标签条上滚动横向查看。 -->
             <Canvas Grid.Row="1"
                     Panel.ZIndex="6"
                     ClipToBounds="True"
                     Visibility="{Binding IsTabHost, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <!-- Canvas.Top=3：标签高 20、行高 26，上下各留 3 的间距。 -->
                 <ScrollViewer Canvas.Left="0"
-                              Canvas.Top="1"
+                              Canvas.Top="3"
                               Width="{Binding ActualWidth, ElementName=BoxContentGrid}"
                               HorizontalScrollBarVisibility="Hidden"
                               VerticalScrollBarVisibility="Disabled">
@@ -375,20 +376,12 @@
                                         ToolTip="{Binding Name}">
                                     <TextBlock Text="{Binding Name}"
                                                TextTrimming="CharacterEllipsis"
-                                               MaxWidth="86" />
+                                               TextAlignment="Center" />
                                 </Button>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
                 </ScrollViewer>
-                <Rectangle Canvas.Left="0"
-                           Canvas.Bottom="0"
-                           Width="{Binding ActualWidth, ElementName=BoxContentGrid}"
-                           Height="1"
-                           Fill="{DynamicResource GlassStrokeBrush}"
-                           Opacity="0.6"
-                           IsHitTestVisible="False"
-                           SnapsToDevicePixels="True" />
             </Canvas>
 
             <!-- 主内容区: ListBox -->

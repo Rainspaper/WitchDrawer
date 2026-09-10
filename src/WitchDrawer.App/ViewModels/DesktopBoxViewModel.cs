@@ -31,10 +31,11 @@ public sealed class DesktopBoxViewModel : ObservableObject
     private const double HiddenGridContentInset = 6;
 
     /// <summary>
-    /// 多标签宿主顶部 Tab 栏占用的行高。宿主窗口把 Tab 栏放在标题栏之上的独立行里，
+    /// 多标签宿主标题栏下方 Tab 栏占用的行高。宿主窗口把 Tab 栏放在标题栏之下的独立行里，
     /// 否则标签文字会与标题、关闭按钮叠在同一行上互相覆盖。
+    /// 26 = 20(标签高) + 上下各 3 的留白（标签栏与标题栏、内容区之间靠距离分隔，不画横线）。
     /// </summary>
-    internal const double VisibleTabBarRowHeight = 22;
+    internal const double VisibleTabBarRowHeight = 26;
 
     private const string MappingViewModeSettingPrefix = "MappingViewMode:";
     private const string MappingListWidthSettingPrefix = "MappingListWidth:";
