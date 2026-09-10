@@ -448,7 +448,9 @@ public sealed class DesktopBoxWindowTemplateTests
             document.Descendants(PresentationNamespace + "Border"),
             element => (string?)element.Attribute(XamlNamespace + "Name") == "MappingListInsertionIndicator");
 
-        Assert.Equal("{Binding MappingListWidth}", (string?)fileList.Attribute("Width"));
+        // 列表宽度走 MappingListViewWidth：非宿主就是它自己的持久化宽度，
+        // 合并宿主则由统一外宽 HostBoxWidth 换算，保证网格/列表两种模式同宽。
+        Assert.Equal("{Binding MappingListViewWidth}", (string?)fileList.Attribute("Width"));
         Assert.Equal("Right", (string?)thumb.Attribute("HorizontalAlignment"));
         Assert.Equal("SizeWE", (string?)thumb.Attribute("Cursor"));
         Assert.Equal("OnMappingListResizeStarted", (string?)thumb.Attribute("DragStarted"));
@@ -459,6 +461,38 @@ public sealed class DesktopBoxWindowTemplateTests
         Assert.DoesNotContain(
             thumb.Descendants(PresentationNamespace + "Border"),
             element => (string?)element.Attribute(XamlNamespace + "Name") == "ResizeLine");
+    }
+
+    [Fact]
+    public void MergedHostWindow_PinsOneSharedWidthForGridAndList()
+    {
+        // 网格与列表的自然宽度不同，合并宿主靠"统一外宽 + 触发器"让两者共用同一个宽度：
+        // SizeToContent/Width 必须写在 Style 触发器里 —— 写在 Window 上会成为本地值，
+        // 本地值优先于触发器，统一宽度就会失效。
+        var document = XDocument.Load(GetDesktopBoxWindowXamlPath());
+        var window = document.Root!;
+        Assert.Null(window.Attribute("SizeToContent"));
+
+        var style = Assert.Single(
+            window.Elements(PresentationNamespace + "Window.Style")
+                .Elements(PresentationNamespace + "Style"));
+        Assert.Contains(
+            style.Elements(PresentationNamespace + "Setter"),
+            setter => (string?)setter.Attribute("Property") == "SizeToContent"
+                && (string?)setter.Attribute("Value") == "WidthAndHeight");
+
+        var unifiedWidthTrigger = Assert.Single(
+            style.Descendants(PresentationNamespace + "DataTrigger"),
+            element => (string?)element.Attribute("Binding") == "{Binding UsesUnifiedWidth}");
+        var setters = unifiedWidthTrigger.Elements(PresentationNamespace + "Setter").ToArray();
+        Assert.Contains(
+            setters,
+            setter => (string?)setter.Attribute("Property") == "SizeToContent"
+                && (string?)setter.Attribute("Value") == "Height");
+        Assert.Contains(
+            setters,
+            setter => (string?)setter.Attribute("Property") == "Width"
+                && (string?)setter.Attribute("Value") == "{Binding HostBoxWidth}");
     }
 
     private static string GetDesktopBoxWindowXamlPath() =>

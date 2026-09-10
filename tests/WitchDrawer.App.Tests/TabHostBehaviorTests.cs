@@ -118,6 +118,53 @@ public sealed class TabHostBehaviorTests
         }
     }
 
+    [Fact]
+    public async Task MergedHost_UsesOneSharedWidthForGridAndList()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var (drawerService, todoService) = await CreateServicesAsync(root);
+            var host = CreateViewModel("工具", BoxType.Mapping, drawerService, todoService);
+            var member = CreateViewModel("AI", BoxType.Mapping, drawerService, todoService);
+
+            // 单盒（未合并）不启用统一宽度，保持原来的"宽度跟内容走"。
+            Assert.False(host.UsesUnifiedWidth);
+
+            host.IsTabHost = true;
+            host.InitializeTabs([member]);
+
+            // 合并宿主（显示的是映射盒）启用统一宽度：网格与列表共用它。
+            Assert.True(host.UsesUnifiedWidth);
+            var defaultWidth = host.HostBoxWidth;
+            Assert.InRange(
+                defaultWidth,
+                DesktopBoxViewModel.MinimumMappingListWidth,
+                DesktopBoxViewModel.MaximumMappingListWidth);
+
+            // 列表视图宽度由统一宽度换算（扣掉列表窗口外边距），比外宽小但同源。
+            Assert.InRange(host.MappingListViewWidth, 1, defaultWidth);
+
+            // 拖拽宽度（列表模式那套手柄）改的是同一个值，两种模式一起变。
+            host.ResizeMappingListWidth(300);
+            Assert.Equal(300, host.HostBoxWidth);
+            Assert.True(host.MappingListViewWidth < 300);
+
+            // 过窄仍被夹到下限，不会把内容裁掉。
+            host.ResizeMappingListWidth(40);
+            Assert.Equal(DesktopBoxViewModel.MinimumMappingListWidth, host.HostBoxWidth);
+
+            // 切标签前后外宽一致（除内容确实更宽的情况，本用例内容为空）。
+            var widthBeforeSwitch = host.HostBoxWidth;
+            host.ActiveTabVm = member;
+            Assert.Equal(widthBeforeSwitch, host.HostBoxWidth);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
     private static string CreateTempRoot()
     {
         var root = Path.Combine(

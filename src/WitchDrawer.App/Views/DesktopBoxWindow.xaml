@@ -5,7 +5,6 @@
         xmlns:infrastructure="clr-namespace:WitchDrawer.App.Infrastructure"
         Title="{Binding Name}"
         Icon="/Assets/app.png"
-        SizeToContent="WidthAndHeight"
         WindowStyle="None"
         AllowsTransparency="True"
         ResizeMode="NoResize"
@@ -26,9 +25,16 @@
     <Window.Style>
         <Style TargetType="{x:Type Window}">
             <!-- 自适应：盒子宽度/高度跟随内容（图标列数），不再有 180px 硬下限。 -->
+            <Setter Property="SizeToContent" Value="WidthAndHeight" />
             <Setter Property="MinWidth" Value="0" />
             <Setter Property="MinHeight" Value="0" />
             <Style.Triggers>
+                <!-- 合并宿主：网格与列表共用同一个外宽（HostBoxWidth），高度仍自适应。
+                     两种模式的自然宽度本来就不同，统一外宽后切换模式/标签盒子不会变宽变窄。 -->
+                <DataTrigger Binding="{Binding UsesUnifiedWidth}" Value="True">
+                    <Setter Property="SizeToContent" Value="Height" />
+                    <Setter Property="Width" Value="{Binding HostBoxWidth}" />
+                </DataTrigger>
                 <DataTrigger Binding="{Binding IsMappingListMode}" Value="True">
                     <Setter Property="MinWidth" Value="150" />
                     <Setter Property="MinHeight" Value="86" />
@@ -511,7 +517,7 @@
             <ListBox x:Name="FileList"
                      Grid.Row="2"
                      Panel.ZIndex="1"
-                      Width="{Binding MappingListWidth}"
+                      Width="{Binding MappingListViewWidth}"
                       MinHeight="{Binding LayoutSettings.MappingListMinHeight}"
                       MaxHeight="{Binding LayoutSettings.MappingListMaxHeight}"
                       Height="{Binding MappingListHeight, Mode=OneWay}"

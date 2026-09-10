@@ -54,6 +54,9 @@ public sealed class DesktopBoxViewModel : ObservableObject
     private const double DefaultDrawerCoverHeight = 112;
     private const double MaximumDrawerCoverDimension = 720;
     private const double DrawerTitleHeightCompensation = 9;
+    /// <summary>网格内容宽度换算成盒子外宽时要补的边框/留白（窗口 Border 外边距 + 图标列表内边距）。</summary>
+    internal const double MergedGridWidthChrome = 28;
+
     internal const double MinimumMappingListWidth = 180;
     internal const double MaximumMappingListWidth = 720;
     internal const double DefaultTodoBoxWidth = 310;
@@ -88,6 +91,9 @@ public sealed class DesktopBoxViewModel : ObservableObject
     private bool _isDragOver;
     private bool _isMappingListMode;
     private double _mappingListWidth;
+
+    /// <summary>合并宿主本次运行内见过的最大内容宽度，作为统一外宽的下界（只增不减）。</summary>
+    private double _mergedContentWidthFloor;
     private bool _hasCustomMappingListWidth;
     private double _mappingListHeight = double.NaN;
     private bool _hasCustomMappingListHeight;
@@ -149,6 +155,37 @@ public sealed class DesktopBoxViewModel : ObservableObject
     public DesktopBoxLayoutSettings LayoutSettings => _layoutSettings;
 
     public double MappingListWidth => _mappingListWidth;
+
+    /// <summary>
+    /// 合并宿主里"列表视图"实际占用的宽度：宿主统一用 <see cref="HostBoxWidth"/> 减去列表外边距，
+    /// 这样网格与列表两种模式的外宽完全一致，切换时盒子不会变宽变窄。
+    /// 非宿主盒保持原行为（列表宽度就是它自己的 MappingListWidth）。
+    /// </summary>
+    public double MappingListViewWidth => IsTabHost
+        ? Math.Max(
+            MinimumMappingListWidth,
+            HostBoxWidth - LayoutSettings.MappingListWindowMargin.Left - LayoutSettings.MappingListWindowMargin.Right)
+        : _mappingListWidth;
+
+    /// <summary>
+    /// 合并宿主是否使用"统一盒子宽度"：只有当窗口里显示的盒子是映射盒（有网格/列表两种模式）时启用。
+    /// 启用时窗口宽度固定为 <see cref="HostBoxWidth"/>（高度仍自适应），
+    /// 两种模式、各个标签共用同一个外宽 —— 这就是网格与列表的兼容点。
+    /// </summary>
+    public bool UsesUnifiedWidth => IsTabHost && IsMappingBox;
+
+    /// <summary>
+    /// 合并宿主的统一外宽 = max(用户设定的映射盒宽度, 网格内容需要的宽度)，再夹在上下限之间。
+    /// 内容只是"下界"（保证图标不被裁切），所以切换模式/标签时宽度恒定；
+    /// 只有某个标签的内容确实更宽时才会变宽，且本次运行内不会缩回去（避免来回跳）。
+    /// </summary>
+    public double HostBoxWidth => CalculateHostBoxWidth(_mappingListWidth, _mergedContentWidthFloor);
+
+    internal static double CalculateHostBoxWidth(double storedWidth, double contentFloorWidth)
+    {
+        var effective = Math.Max(storedWidth, contentFloorWidth);
+        return Math.Clamp(effective, MinimumMappingListWidth, MaximumMappingListWidth);
+    }
     public double MappingListHeight => _mappingListHeight;
 
     public double TodoBoxWidth => _todoBoxWidth;
@@ -672,6 +709,10 @@ public sealed class DesktopBoxViewModel : ObservableObject
         OnPropertyChanged(nameof(DrawerContentHeight));
         OnPropertyChanged(nameof(MappingListWidth));
         OnPropertyChanged(nameof(MappingListHeight));
+        // 统一外宽（网格/列表兼容方案）：跟随当前标签是否为映射盒，以及它的内容宽度。
+        OnPropertyChanged(nameof(UsesUnifiedWidth));
+        OnPropertyChanged(nameof(HostBoxWidth));
+        OnPropertyChanged(nameof(MappingListViewWidth));
         OnPropertyChanged(nameof(TodoBoxWidth));
         OnPropertyChanged(nameof(TodoBoxHeight));
         OnPropertyChanged(nameof(TypeLabel));
@@ -1450,6 +1491,7 @@ public sealed class DesktopBoxViewModel : ObservableObject
             ref _mappingListWidth,
             NormalizeMappingListWidth(width, LayoutSettings.MappingListWidth),
             nameof(MappingListWidth));
+        NotifyHostWidthChanged();
     }
 
     public async Task LoadMappingListWidthAsync()
@@ -1479,6 +1521,8 @@ public sealed class DesktopBoxViewModel : ObservableObject
                     LayoutSettings.MappingListWidth,
                     nameof(MappingListWidth));
             }
+
+            NotifyHostWidthChanged();
         }
         catch (Exception exception)
         {
@@ -1979,6 +2023,42 @@ public sealed class DesktopBoxViewModel : ObservableObject
 
         OnPropertyChanged(nameof(DragPreviewWidth));
         OnPropertyChanged(nameof(DragPreviewHeight));
+
+        if (IsTabHost)
+        {
+            // 合并宿主：内容宽度决定盒子外宽的下界（保证图标不被裁），切标签后也要重算。
+            UpdateMergedContentWidthFloor();
+        }
+    }
+
+    /// <summary>
+    /// 记录"网格内容实际需要的盒子宽度"，作为 <see cref="HostBoxWidth"/> 的下界。
+    /// 本次运行内只增不减，避免切换标签时盒子忽宽忽窄。
+    /// </summary>
+    private void UpdateMergedContentWidthFloor()
+    {
+        if (GridCanvasWidth <= 0)
+        {
+            return;
+        }
+
+        var required = GridCanvasWidth + MergedGridWidthChrome;
+        if (required <= _mergedContentWidthFloor)
+        {
+            return;
+        }
+
+        _mergedContentWidthFloor = required;
+        NotifyHostWidthChanged();
+    }
+
+    /// <summary>
+    /// 映射盒宽度变化（用户拖拽 / 读取设置 / 预设变化）后，统一宽度与列表视图宽度都要重算。
+    /// </summary>
+    private void NotifyHostWidthChanged()
+    {
+        OnPropertyChanged(nameof(HostBoxWidth));
+        OnPropertyChanged(nameof(MappingListViewWidth));
     }
 
     private void PublishGridExtentIfChanged(int columns, int rows)
@@ -2542,6 +2622,7 @@ public sealed class DesktopBoxViewModel : ObservableObject
                 ref _mappingListWidth,
                 LayoutSettings.MappingListWidth,
                 nameof(MappingListWidth));
+            NotifyHostWidthChanged();
         }
         if ((e.PropertyName is nameof(DesktopBoxLayoutSettings.MappingListMinHeight)
                 or nameof(DesktopBoxLayoutSettings.MappingListMaxHeight))
