@@ -483,7 +483,7 @@ public sealed class DesktopBoxWindowTemplateTests
 
         var unifiedWidthTrigger = Assert.Single(
             style.Descendants(PresentationNamespace + "DataTrigger"),
-            element => (string?)element.Attribute("Binding") == "{Binding UsesUnifiedWidth}");
+            element => (string?)element.Attribute("Binding") == "{Binding UsesUnifiedBoxSize}");
         var setters = unifiedWidthTrigger.Elements(PresentationNamespace + "Setter").ToArray();
         Assert.Contains(
             setters,
@@ -493,6 +493,29 @@ public sealed class DesktopBoxWindowTemplateTests
             setters,
             setter => (string?)setter.Attribute("Property") == "Width"
                 && (string?)setter.Attribute("Value") == "{Binding HostBoxWidth}");
+
+        // 拖过高度后：关闭高度自适应并把高度钉住，切换标签不再变高变矮。
+        var unifiedHeightTrigger = Assert.Single(
+            style.Descendants(PresentationNamespace + "DataTrigger"),
+            element => (string?)element.Attribute("Binding") == "{Binding HasUnifiedHeight}");
+        var heightSetters = unifiedHeightTrigger.Elements(PresentationNamespace + "Setter").ToArray();
+        Assert.Contains(
+            heightSetters,
+            setter => (string?)setter.Attribute("Property") == "SizeToContent"
+                && (string?)setter.Attribute("Value") == "Manual");
+        Assert.Contains(
+            heightSetters,
+            setter => (string?)setter.Attribute("Property") == "Height"
+                && (string?)setter.Attribute("Value") == "{Binding HostBoxHeight}");
+
+        // 同一集合里靠后的触发器优先级更高：高度触发器必须排在宽度触发器之后才生效。
+        var triggerBindings = style.Descendants(PresentationNamespace + "DataTrigger")
+            .Select(element => (string?)element.Attribute("Binding"))
+            .ToArray();
+        Assert.True(
+            Array.IndexOf(triggerBindings, "{Binding HasUnifiedHeight}")
+                > Array.IndexOf(triggerBindings, "{Binding UsesUnifiedBoxSize}"),
+            "固定高度的触发器必须声明在统一宽度的触发器之后。");
     }
 
     private static string GetDesktopBoxWindowXamlPath() =>

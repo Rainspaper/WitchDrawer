@@ -129,13 +129,13 @@ public sealed class TabHostBehaviorTests
             var member = CreateViewModel("AI", BoxType.Mapping, drawerService, todoService);
 
             // 单盒（未合并）不启用统一宽度，保持原来的"宽度跟内容走"。
-            Assert.False(host.UsesUnifiedWidth);
+            Assert.False(host.UsesUnifiedBoxSize);
 
             host.IsTabHost = true;
             host.InitializeTabs([member]);
 
             // 合并宿主（显示的是映射盒）启用统一宽度：网格与列表共用它。
-            Assert.True(host.UsesUnifiedWidth);
+            Assert.True(host.UsesUnifiedBoxSize);
             var defaultWidth = host.HostBoxWidth;
             Assert.InRange(
                 defaultWidth,
@@ -163,6 +163,23 @@ public sealed class TabHostBehaviorTests
             var widthBeforeSwitch = host.HostBoxWidth;
             host.ActiveTabVm = member;
             Assert.Equal(widthBeforeSwitch, host.HostBoxWidth);
+
+            // 高度：没拖过时不自适应以外的约束（NaN = 仍然按内容定高）。
+            Assert.False(host.HasUnifiedHeight);
+            Assert.True(double.IsNaN(host.HostBoxHeight));
+
+            // 拖过高度后固定下来，切换标签（网格标签 ↔ 列表标签）不再变高变矮。
+            host.ResizeMappingListHeight(340);
+            Assert.True(host.HasUnifiedHeight);
+            Assert.Equal(340, host.HostBoxHeight);
+
+            host.ActiveTabVm = host;
+            Assert.Equal(340, host.HostBoxHeight);
+            Assert.True(host.HasUnifiedHeight);
+
+            host.ActiveTabVm = member;
+            Assert.Equal(340, host.HostBoxHeight);
+            Assert.True(host.HasUnifiedHeight);
         }
         finally
         {

@@ -165,11 +165,23 @@ public sealed class DesktopBoxViewModel : ObservableObject
         : _mappingListWidth;
 
     /// <summary>
-    /// 合并宿主是否使用"统一盒子宽度"：只有当窗口里显示的盒子是映射盒（有网格/列表两种模式）时启用。
-    /// 启用时窗口宽度固定为 <see cref="HostBoxWidth"/>（高度仍自适应），
-    /// 两种模式、各个标签共用同一个外宽 —— 这就是网格与列表的兼容点。
+    /// 合并宿主是否使用"统一盒子尺寸"：只有当窗口里显示的盒子是映射盒（有网格/列表两种模式）时启用。
+    /// 启用时窗口宽度固定为 <see cref="HostBoxWidth"/>，两种模式、各个标签共用同一个外宽。
     /// </summary>
-    public bool UsesUnifiedWidth => IsTabHost && IsMappingBox;
+    public bool UsesUnifiedBoxSize => IsTabHost && IsMappingBox;
+
+    /// <summary>
+    /// 合并宿主的统一外高：用户在任一模式里拖过高度后，切标签/切模式都固定用它；
+    /// 没拖过时返回 NaN（NaN = 高度仍按内容自适应）。
+    /// </summary>
+    public double HostBoxHeight => IsTabHost ? _mappingListHeight : double.NaN;
+
+    /// <summary>
+    /// 是否已经为合并宿主设定过固定高度：决定窗口是否关闭高度自适应（SizeToContent=Manual）。
+    /// 设定过之后切换标签不再改变盒子高度。
+    /// </summary>
+    public bool HasUnifiedHeight =>
+        UsesUnifiedBoxSize && double.IsFinite(_mappingListHeight) && _mappingListHeight > 0;
 
     /// <summary>
     /// 合并宿主的统一外宽 = max(用户设定的映射盒宽度, 内容兜底宽度)，再夹在上下限之间，
@@ -730,9 +742,12 @@ public sealed class DesktopBoxViewModel : ObservableObject
         OnPropertyChanged(nameof(MappingListWidth));
         OnPropertyChanged(nameof(MappingListHeight));
         // 统一外宽（网格/列表兼容方案）：跟随当前标签是否为映射盒，以及它的内容宽度。
-        OnPropertyChanged(nameof(UsesUnifiedWidth));
+        OnPropertyChanged(nameof(UsesUnifiedBoxSize));
         OnPropertyChanged(nameof(HostBoxWidth));
         OnPropertyChanged(nameof(MappingListViewWidth));
+        // 统一外高：宿主拖过高度后固定，切换标签不再变高变矮。
+        OnPropertyChanged(nameof(HostBoxHeight));
+        OnPropertyChanged(nameof(HasUnifiedHeight));
         OnPropertyChanged(nameof(TodoBoxWidth));
         OnPropertyChanged(nameof(TodoBoxHeight));
         OnPropertyChanged(nameof(TypeLabel));
@@ -1594,6 +1609,7 @@ public sealed class DesktopBoxViewModel : ObservableObject
             ref _mappingListHeight,
             NormalizeMappingListHeight(height),
             nameof(MappingListHeight));
+        NotifyHostHeightChanged();
     }
 
     public async Task LoadMappingListHeightAsync()
@@ -1620,6 +1636,8 @@ public sealed class DesktopBoxViewModel : ObservableObject
                 _hasCustomMappingListHeight = false;
                 SetProperty(ref _mappingListHeight, double.NaN, nameof(MappingListHeight));
             }
+
+            NotifyHostHeightChanged();
         }
         catch (Exception exception)
         {
@@ -2060,6 +2078,15 @@ public sealed class DesktopBoxViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(HostBoxWidth));
         OnPropertyChanged(nameof(MappingListViewWidth));
+    }
+
+    /// <summary>
+    /// 映射盒高度变化（用户拖拽 / 读取设置）后，统一外高与"是否固定高度"都要重算。
+    /// </summary>
+    private void NotifyHostHeightChanged()
+    {
+        OnPropertyChanged(nameof(HostBoxHeight));
+        OnPropertyChanged(nameof(HasUnifiedHeight));
     }
 
     private void PublishGridExtentIfChanged(int columns, int rows)

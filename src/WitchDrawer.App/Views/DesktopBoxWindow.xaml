@@ -29,11 +29,17 @@
             <Setter Property="MinWidth" Value="0" />
             <Setter Property="MinHeight" Value="0" />
             <Style.Triggers>
-                <!-- 合并宿主：网格与列表共用同一个外宽（HostBoxWidth），高度仍自适应。
-                     两种模式的自然宽度本来就不同，统一外宽后切换模式/标签盒子不会变宽变窄。 -->
-                <DataTrigger Binding="{Binding UsesUnifiedWidth}" Value="True">
+                <!-- 合并宿主：网格与列表共用同一个外宽（HostBoxWidth），两种模式的自然宽度本来就不同，
+                     统一外宽后切换模式/标签盒子不会变宽。未设定高度时高度仍自适应。 -->
+                <DataTrigger Binding="{Binding UsesUnifiedBoxSize}" Value="True">
                     <Setter Property="SizeToContent" Value="Height" />
                     <Setter Property="Width" Value="{Binding HostBoxWidth}" />
+                </DataTrigger>
+                <!-- 已经拖过高度：高度也固定下来（关闭高度自适应），切换标签不再变高变矮。
+                     必须排在上面那个触发器之后才会生效。 -->
+                <DataTrigger Binding="{Binding HasUnifiedHeight}" Value="True">
+                    <Setter Property="SizeToContent" Value="Manual" />
+                    <Setter Property="Height" Value="{Binding HostBoxHeight}" />
                 </DataTrigger>
                 <DataTrigger Binding="{Binding IsMappingListMode}" Value="True">
                     <Setter Property="MinWidth" Value="150" />
@@ -662,6 +668,10 @@
                             <DataTrigger Binding="{Binding IsMappingListMode}" Value="True">
                                 <Setter Property="Visibility" Value="Visible" />
                             </DataTrigger>
+                            <!-- 合并宿主在网格模式下也要能拖尺寸（统一的宽/高） -->
+                            <DataTrigger Binding="{Binding UsesUnifiedBoxSize}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
                             <DataTrigger Binding="{Binding IsRolledUp}" Value="True">
                                 <Setter Property="Visibility" Value="Collapsed" />
                             </DataTrigger>
@@ -691,6 +701,10 @@
                         <Setter Property="Visibility" Value="Collapsed" />
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding IsMappingListMode}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                            <!-- 合并宿主在网格模式下也要能拖尺寸（统一的宽/高） -->
+                            <DataTrigger Binding="{Binding UsesUnifiedBoxSize}" Value="True">
                                 <Setter Property="Visibility" Value="Visible" />
                             </DataTrigger>
                             <DataTrigger Binding="{Binding IsRolledUp}" Value="True">
@@ -724,6 +738,10 @@
                         <Setter Property="Visibility" Value="Collapsed" />
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding IsMappingListMode}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                            <!-- 合并宿主在网格模式下也要能拖尺寸（统一的宽/高） -->
+                            <DataTrigger Binding="{Binding UsesUnifiedBoxSize}" Value="True">
                                 <Setter Property="Visibility" Value="Visible" />
                             </DataTrigger>
                             <DataTrigger Binding="{Binding IsRolledUp}" Value="True">
