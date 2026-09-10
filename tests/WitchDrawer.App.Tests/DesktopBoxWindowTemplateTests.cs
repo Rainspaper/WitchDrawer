@@ -334,6 +334,14 @@ public sealed class DesktopBoxWindowTemplateTests
         Assert.Equal("{StaticResource TabChipButtonStyle}", (string?)tabButton.Attribute("Style"));
         var tabText = Assert.Single(tabButton.Descendants(PresentationNamespace + "TextBlock"));
         Assert.Equal("CharacterEllipsis", (string?)tabText.Attribute("TextTrimming"));
+
+        // 标签文字必须绑「盒子自身名字 TabLabel」而不是 Name：
+        // 宿主盒的 Name 会跟随当前选中标签，用它会让第一格标签的文字跟着选中项一起变。
+        Assert.Equal("{Binding TabLabel}", (string?)tabText.Attribute("Text"));
+        Assert.Equal("{Binding TabLabel}", (string?)tabButton.Attribute("ToolTip"));
+
+        // 绑定名和 VM 属性名两侧一起锁住：改名会让 WPF 绑定静默失效，界面上表现为文字空白。
+        Assert.NotNull(typeof(DesktopBoxViewModel).GetProperty("TabLabel"));
     }
 
     [Fact]

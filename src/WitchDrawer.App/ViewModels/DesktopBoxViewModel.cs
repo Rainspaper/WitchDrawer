@@ -227,7 +227,18 @@ public sealed class DesktopBoxViewModel : ObservableObject
             ? _activeTabVm
             : null;
 
+    /// <summary>
+    /// 窗口标题与标题栏显示的当前盒子名：宿主窗口会跟随当前选中的标签。
+    /// 标签栏不能用它，见 <see cref="TabLabel"/>。
+    /// </summary>
     public string Name => ActiveTab?._box.Name ?? _box.Name;
+
+    /// <summary>
+    /// 盒子自身的名字，不随选中标签变化。标签栏里每一格显示的是"这个盒子自己的名字"，
+    /// 所以不能用 <see cref="Name"/>：宿主盒的 Name 会跟随选中项，
+    /// 会导致第一格标签的文字跟着被选中的标签一起变。
+    /// </summary>
+    public string TabLabel => _box.Name;
 
     public BoxType Type => ActiveTab?._box.Type ?? _box.Type;
 

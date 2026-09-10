@@ -373,8 +373,10 @@
                                 <Button Click="OnTabButtonClick"
                                         CommandParameter="{Binding BoxId}"
                                         Style="{StaticResource TabChipButtonStyle}"
-                                        ToolTip="{Binding Name}">
-                                    <TextBlock Text="{Binding Name}"
+                                        ToolTip="{Binding TabLabel}">
+                                    <!-- 必须绑 TabLabel（盒子自身名字）：宿主的 Name 会跟随选中标签，
+                                         用它会让第一格标签的文字跟着选中项一起变。 -->
+                                    <TextBlock Text="{Binding TabLabel}"
                                                TextTrimming="CharacterEllipsis"
                                                TextAlignment="Center" />
                                 </Button>
