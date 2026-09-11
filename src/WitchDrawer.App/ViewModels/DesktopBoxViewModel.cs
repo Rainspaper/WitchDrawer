@@ -227,6 +227,17 @@ public sealed class DesktopBoxViewModel : ObservableObject
     }
     public double MappingListHeight => _mappingListHeight;
 
+    /// <summary>
+    /// 列表视图请求的高度（XAML <c>FileList.Height</c> 绑定它）：
+    /// 非宿主映射盒返回用户拖拽设定的列表高度（窗口 SizeToContent 随它走）；
+    /// 合并宿主（多标签）内返回 NaN —— 列表改由 <c>VerticalAlignment=Stretch</c>
+    /// 填充内容区剩余高度。否则列表高度与宿主窗口高度绑定同源值（都是
+    /// <c>HostBoxHeight</c>），窗口还要腾出标题栏/标签栏空间，列表底部条目
+    /// 会被窗口裁掉，滚动条滚不到底。
+    /// </summary>
+    public double MappingListRequestedHeight =>
+        IsTabHost && IsMappingListMode ? double.NaN : _mappingListHeight;
+
     public double TodoBoxWidth => _todoBoxWidth;
     public double TodoBoxHeight => _todoBoxHeight;
 
@@ -750,6 +761,7 @@ public sealed class DesktopBoxViewModel : ObservableObject
         OnPropertyChanged(nameof(DrawerContentHeight));
         OnPropertyChanged(nameof(MappingListWidth));
         OnPropertyChanged(nameof(MappingListHeight));
+        OnPropertyChanged(nameof(MappingListRequestedHeight));
         // 统一外宽（网格/列表兼容方案）：跟随当前标签是否为映射盒，以及它的内容宽度。
         OnPropertyChanged(nameof(UsesUnifiedBoxSize));
         OnPropertyChanged(nameof(HostBoxWidth));
@@ -810,6 +822,7 @@ public sealed class DesktopBoxViewModel : ObservableObject
             OnPropertyChanged(nameof(HostBoxWidth));
             OnPropertyChanged(nameof(HostBoxHeight));
             OnPropertyChanged(nameof(HasUnifiedHeight));
+            OnPropertyChanged(nameof(MappingListRequestedHeight));
         }
     }
 
@@ -2212,6 +2225,7 @@ public sealed class DesktopBoxViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(HostBoxHeight));
         OnPropertyChanged(nameof(HasUnifiedHeight));
+        OnPropertyChanged(nameof(MappingListRequestedHeight));
     }
 
     /// <summary>

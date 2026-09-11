@@ -296,6 +296,40 @@ public sealed class TabHostBehaviorTests
         }
     }
 
+    [Fact]
+    public async Task MappingListRequestedHeight_IsNaNInsideTabHost_ButKeepsDraggedHeightStandalone()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var (drawerService, todoService) = await CreateServicesAsync(root);
+            var host = CreateViewModel("工具", BoxType.Mapping, drawerService, todoService);
+            var member = CreateViewModel("AI", BoxType.Mapping, drawerService, todoService);
+
+            // 非宿主映射盒：请求高度 = 用户拖拽设定的列表高度（窗口随它走）。
+            host.ResizeMappingListHeight(340);
+            Assert.Equal(340, host.MappingListRequestedHeight);
+
+            // 合并宿主 + 列表模式：请求高度为 NaN —— 列表拉伸填充内容区剩余高度，
+            // 而不是与宿主窗口高度绑定同源值（否则窗口扣掉标题栏/标签栏后
+            // 列表底部条目会被裁掉，滚动条滚不到底）。
+            host.IsTabHost = true;
+            host.InitializeTabs([member]);
+            host.ActiveTabVm = member;
+            await host.UseMappingListModeCommand.ExecuteAsync(null);
+            Assert.True(host.IsMappingListMode);
+            Assert.True(double.IsNaN(host.MappingListRequestedHeight));
+
+            // 宿主切回网格模式：列表隐藏，请求高度回到用户拖拽值（绑定不生效，无 UI 影响）。
+            host.ActiveTabVm = host;
+            Assert.Equal(340, host.MappingListRequestedHeight);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
     private static string CreateTempRoot()
     {
         var root = Path.Combine(
