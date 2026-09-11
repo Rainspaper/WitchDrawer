@@ -1736,7 +1736,7 @@ public sealed class DesktopBoxManager
             return;
         }
 
-        if (!e.HeightChanged)
+        if (!e.HeightChanged && !e.WidthChanged)
         {
             return;
         }
@@ -1750,7 +1750,15 @@ public sealed class DesktopBoxManager
         _isAdjustingPosition = true;
         try
         {
-            PerformHeightResizeAlignment(resizedWindow, applySnap: true);
+            if (e.HeightChanged)
+            {
+                PerformHeightResizeAlignment(resizedWindow, applySnap: true);
+            }
+
+            if (e.WidthChanged)
+            {
+                PerformWidthResizeAlignment(resizedWindow, applySnap: true);
+            }
         }
         finally
         {
@@ -1864,6 +1872,160 @@ public sealed class DesktopBoxManager
         {
             HideHorizontalGuide();
         }
+    }
+
+    /// <summary>
+    /// 调整盒子宽度时的对齐：上下排列的盒子接近同一宽度时，
+    /// 显示纵向虚线（等宽右缘/右缘/左缘对齐线），接近阈值内自动吸附宽度。
+    /// 与 <see cref="PerformHeightResizeAlignment"/> 对称，只比较同视觉模式
+    /// 的宽度（MappingListWidth 与 DrawerCoverWidth 单位不可混比）。
+    /// </summary>
+    private void PerformWidthResizeAlignment(DesktopBoxWindow resizedWindow, bool applySnap = false)
+    {
+        var dpi = resizedWindow.GetDpiScale();
+        var snapThreshold = 10.0 * dpi.DpiScaleX;
+        var widthSnapThreshold = 10.0;
+
+        var boundsA = resizedWindow.GetVisibleBoundsPixels();
+        if (boundsA.IsEmpty)
+        {
+            HideVerticalGuide();
+            return;
+        }
+
+        double currentTop = boundsA.Top;
+        double currentBottom = boundsA.Bottom;
+        double currentLeft = boundsA.Left;
+        double currentRight = boundsA.Right;
+
+        var currentWidth = GetBoxWidth(resizedWindow);
+        var candidateWidths = new List<double>();
+
+        var verticalGuideXs = new List<double>();
+        double verticalGuideYMin = double.MaxValue;
+        double verticalGuideYMax = double.MinValue;
+
+        foreach (var pair in _windows)
+        {
+            var otherWindow = pair.Value;
+            if (otherWindow == resizedWindow || !otherWindow.IsVisible)
+            {
+                continue;
+            }
+
+            // 同视觉模式才比较宽度值：列表模式宽度与抽屉封面宽度语义不同。
+            if (currentWidth.HasValue
+                && resizedWindow.ViewModel.IsMappingListMode == otherWindow.ViewModel.IsMappingListMode)
+            {
+                var otherWidth = GetBoxWidth(otherWindow);
+                if (otherWidth.HasValue)
+                {
+                    candidateWidths.Add(otherWidth.Value);
+                }
+            }
+
+            var boundsB = otherWindow.GetVisibleBoundsPixels();
+            if (boundsB.IsEmpty)
+            {
+                continue;
+            }
+
+            double topB = boundsB.Top;
+            double bottomB = boundsB.Bottom;
+            double widthB = boundsB.Width;
+            double leftB = boundsB.Left;
+            double rightB = boundsB.Right;
+
+            // Align with another box's equal width (right edge follows the other's
+            // right edge when the widths match).
+            var equalWidthRight = currentLeft + widthB;
+            if (Math.Abs(currentRight - equalWidthRight) <= snapThreshold)
+            {
+                AddVerticalGuide(verticalGuideXs, ref verticalGuideYMin, ref verticalGuideYMax, equalWidthRight, currentTop, topB, currentBottom, bottomB);
+            }
+
+            // Align right edge with another box's right edge.
+            if (Math.Abs(currentRight - rightB) <= snapThreshold)
+            {
+                AddVerticalGuide(verticalGuideXs, ref verticalGuideYMin, ref verticalGuideYMax, rightB, currentTop, topB, currentBottom, bottomB);
+            }
+
+            // Align right edge with another box's left edge.
+            if (Math.Abs(currentRight - leftB) <= snapThreshold)
+            {
+                AddVerticalGuide(verticalGuideXs, ref verticalGuideYMin, ref verticalGuideYMax, leftB, currentTop, topB, currentBottom, bottomB);
+            }
+        }
+
+        if (applySnap && currentWidth.HasValue)
+        {
+            var snappedWidth = FindWidthSnapTarget(
+                currentWidth.Value,
+                candidateWidths,
+                widthSnapThreshold);
+            if (snappedWidth.HasValue)
+            {
+                if (resizedWindow.ViewModel.IsMappingListMode)
+                {
+                    resizedWindow.ViewModel.ResizeMappingListWidth(snappedWidth.Value);
+                }
+                else
+                {
+                    resizedWindow.ViewModel.ResizeDrawerCover(
+                        snappedWidth.Value,
+                        resizedWindow.ViewModel.DrawerCoverHeight);
+                }
+            }
+        }
+
+        if (verticalGuideXs.Count > 0 && verticalGuideYMax > verticalGuideYMin)
+        {
+            ShowVerticalGuide(verticalGuideXs, verticalGuideYMin, verticalGuideYMax - verticalGuideYMin);
+        }
+        else
+        {
+            HideVerticalGuide();
+        }
+    }
+
+    /// <summary>
+    /// 从候选宽度里挑最近且在阈值内的吸附目标；无命中返回 null。
+    /// 抽成纯函数便于单元测试。
+    /// </summary>
+    internal static double? FindWidthSnapTarget(
+        double currentWidth,
+        IEnumerable<double> candidateWidths,
+        double threshold)
+    {
+        double? best = null;
+        double bestDiff = double.MaxValue;
+        foreach (var candidate in candidateWidths)
+        {
+            if (!double.IsFinite(candidate) || candidate <= 0)
+            {
+                continue;
+            }
+
+            var diff = Math.Abs(currentWidth - candidate);
+            if (diff <= threshold && diff < bestDiff)
+            {
+                best = candidate;
+                bestDiff = diff;
+            }
+        }
+
+        return best;
+    }
+
+    private static double? GetBoxWidth(DesktopBoxWindow window)
+    {
+        var viewModel = window.ViewModel;
+        if (viewModel.IsMappingListMode)
+        {
+            return viewModel.MappingListWidth;
+        }
+
+        return viewModel.DrawerCoverWidth;
     }
 
     private static double? GetBoxHeight(DesktopBoxWindow window)

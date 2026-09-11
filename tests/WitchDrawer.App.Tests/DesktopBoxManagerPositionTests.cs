@@ -7,6 +7,30 @@ namespace WitchDrawer.App.Tests;
 public sealed class DesktopBoxManagerPositionTests
 {
     [Fact]
+    public void FindWidthSnapTarget_SnapsToNearestCandidateWithinThreshold()
+    {
+        // 当前宽度 300，候选 285/295/310：最近的是 295（差 5 ≤ 阈值 10）。
+        var target = DesktopBoxManager.FindWidthSnapTarget(300, [285, 295, 310], threshold: 10);
+
+        Assert.Equal(295, target);
+    }
+
+    [Fact]
+    public void FindWidthSnapTarget_ReturnsNull_WhenNoCandidateWithinThreshold()
+    {
+        // 最近候选差 12 > 阈值 10：不吸附。
+        var target = DesktopBoxManager.FindWidthSnapTarget(300, [288, 320], threshold: 10);
+
+        Assert.Null(target);
+    }
+
+    [Fact]
+    public void FindWidthSnapTarget_IgnoresEmptyCandidates()
+    {
+        Assert.Null(DesktopBoxManager.FindWidthSnapTarget(300, [], threshold: 10));
+    }
+
+    [Fact]
     public void SerializePosition_UsesInvariantRoundTripFormat()
     {
         var serialized = DesktopBoxManager.SerializePosition(12.5, -34.75);
