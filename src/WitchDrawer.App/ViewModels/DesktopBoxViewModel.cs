@@ -57,6 +57,9 @@ public sealed class DesktopBoxViewModel : ObservableObject
     /// <summary>网格内容宽度换算成盒子外宽时要补的边框/留白（窗口 Border 外边距 + 图标列表内边距）。</summary>
     internal const double MergedGridWidthChrome = 28;
 
+    /// <summary>窗口 Border 左右（或上下）外边距之和：封面尺寸换算成窗口外宽时要加上它。</summary>
+    internal const double WindowBorderInset = 12;
+
     internal const double MinimumMappingListWidth = 180;
     internal const double MaximumMappingListWidth = 720;
     internal const double DefaultTodoBoxWidth = 310;
@@ -178,20 +181,29 @@ public sealed class DesktopBoxViewModel : ObservableObject
 
     /// <summary>
     /// 是否已经为合并宿主设定过固定高度：决定窗口是否关闭高度自适应（SizeToContent=Manual）。
-    /// 设定过之后切换标签不再改变盒子高度。
+    /// 抽屉封面视图的高度由封面自己决定（跟着封面手柄走），所以那里返回 false 走自适应。
     /// </summary>
     public bool HasUnifiedHeight =>
-        UsesUnifiedBoxSize && double.IsFinite(_mappingListHeight) && _mappingListHeight > 0;
+        UsesUnifiedBoxSize
+        && !IsDrawerCollapsed
+        && double.IsFinite(_mappingListHeight)
+        && _mappingListHeight > 0;
 
     /// <summary>
-    /// 合并宿主的统一外宽 = 用户设定的映射盒宽度（夹在上下限之间）。
-    /// 网格内容不再参与定宽：网格模式会按这个宽度自动决定列数并换行，
-    /// 所以在任何宽度下都不会裁切图标，也不会出现"内容把盒子撑宽"。
+    /// 合并宿主的统一外宽：
+    /// <list type="bullet">
+    /// <item>抽屉封面视图（收起态）：跟着封面自己的尺寸走 —— 封面上的斜杠手柄就是唯一的尺寸手柄，
+    /// 拖它封面变大，窗口跟着变大（不再是"里面一个手柄、外面一个手柄"两套）。</item>
+    /// <item>其余情况（网格/列表）：用用户设定的映射盒宽度。</item>
+    /// </list>
     /// </summary>
     public double HostBoxWidth => Math.Clamp(
-        _mappingListWidth,
+        IsUnifiedCoverView ? _drawerCoverWidth + WindowBorderInset : _mappingListWidth,
         MinimumMappingListWidth,
         MaximumMappingListWidth);
+
+    /// <summary>合并宿主当前是否显示"抽屉封面"视图（封面自带尺寸手柄，窗口外宽跟着它）。</summary>
+    private bool IsUnifiedCoverView => UsesUnifiedBoxSize && IsDrawerCollapsed;
 
     /// <summary>
     /// 合并宿主网格模式下的列数：按盒子宽度算"能放下几列"，最多不超过条目数。
@@ -368,6 +380,8 @@ public sealed class DesktopBoxViewModel : ObservableObject
                 OnPropertyChanged(nameof(IsHeaderVisible));
                 OnPropertyChanged(nameof(HeaderRowHeight));
                 OnPropertyChanged(nameof(ShowFileEmptyState));
+                // 展开/收起会在"封面尺寸"和"网格尺寸"之间切换统一尺寸来源。
+                NotifyHostSizeSourceChanged();
             }
         }
     }
@@ -668,6 +682,12 @@ public sealed class DesktopBoxViewModel : ObservableObject
     /// <summary>标签页 VM 列表（含宿主自身作为第一个标签）。</summary>
     public ObservableCollection<DesktopBoxViewModel> TabVms => _tabVms;
 
+    /// <summary>
+    /// 是否为宿主盒自身的标签（TabVms 的第一个）。宿主自身没有上级组，
+    /// 拆出它等于解散整组——UI 用它禁用"从组合中移出"。
+    /// </summary>
+    public bool IsHostSelfTab => IsTabHost && ReferenceEquals(_tabVms.FirstOrDefault(), this);
+
     /// <summary>当前标签是否为宿主窗口中选中的活动标签（用于 Tab 栏高亮）。</summary>
     public bool IsActiveTab
     {
@@ -796,6 +816,8 @@ public sealed class DesktopBoxViewModel : ObservableObject
             OnPropertyChanged(nameof(HostBoxWidth));
             OnPropertyChanged(nameof(HostBoxHeight));
             OnPropertyChanged(nameof(HasUnifiedHeight));
+            // 宿主/非宿主切换会改变"宿主自身标签"的标记（菜单禁用项跟着变）。
+            OnPropertyChanged(nameof(IsHostSelfTab));
         }
     }
 
@@ -815,6 +837,8 @@ public sealed class DesktopBoxViewModel : ObservableObject
         IsActiveTab = true;
         OnPropertyChanged(nameof(TabVms));
         OnPropertyChanged(nameof(ActiveTabVm));
+        // 标签列表就绪后"宿主自身标签"标记才可判定（TabVms[0] == this）。
+        OnPropertyChanged(nameof(IsHostSelfTab));
         // 宿主自身就是第一个标签：初始化后按统一宽度重排一次网格，否则要等第一次切标签才生效。
         ApplyMergedGridFlowLayout();
         UpdateGridCanvasSize();
@@ -2166,6 +2190,19 @@ public sealed class DesktopBoxViewModel : ObservableObject
         OnPropertyChanged(nameof(HasUnifiedHeight));
     }
 
+    /// <summary>
+    /// 尺寸来源变化的场合（抽屉封面 ↔ 网格/列表、封面被拖动、抽屉样式开关）：
+    /// 统一宽高与"是否固定高度"都要重算，窗口才能跟着换尺寸。
+    /// </summary>
+    private void NotifyHostSizeSourceChanged()
+    {
+        OnPropertyChanged(nameof(HostBoxWidth));
+        OnPropertyChanged(nameof(MappingListViewWidth));
+        OnPropertyChanged(nameof(HostBoxHeight));
+        OnPropertyChanged(nameof(HasUnifiedHeight));
+        OnPropertyChanged(nameof(MergedGridColumns));
+    }
+
     private void PublishGridExtentIfChanged(int columns, int rows)
     {
         columns = Math.Max(1, columns);
@@ -2288,6 +2325,12 @@ public sealed class DesktopBoxViewModel : ObservableObject
         OnPropertyChanged(nameof(DrawerDirectItemCount));
         OnPropertyChanged(nameof(DrawerContentHeight));
         RefreshDrawerPreview();
+
+        if (UsesUnifiedBoxSize)
+        {
+            // 封面被拖动 → 统一外宽跟着封面走（窗口随封面手柄一起变大小）。
+            NotifyHostSizeSourceChanged();
+        }
     }
 
     /// <summary>
@@ -2325,6 +2368,8 @@ public sealed class DesktopBoxViewModel : ObservableObject
         OnPropertyChanged(nameof(ShowFileEmptyState));
         RefreshDrawerPreview();
         SyncDrawerSecondaryFromItems();
+        // 抽屉样式开关会改变"封面尺寸 / 网格尺寸"哪一个当统一尺寸的来源。
+        NotifyHostSizeSourceChanged();
     }
 
     public async Task LoadDrawerCoverSizeAsync()

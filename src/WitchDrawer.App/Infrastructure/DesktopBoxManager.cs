@@ -119,6 +119,22 @@ public sealed class DesktopBoxManager
         WeakReferenceMessenger.Default.Register<DesktopBoxManager, BoxSizeModeChangedMessage>(
             this,
             static (recipient, message) => recipient.ApplyBoxSizeMode(message));
+        WeakReferenceMessenger.Default.Register<DesktopBoxManager, BoxTabSplitRequestedMessage>(
+            this,
+            static (recipient, message) => recipient.ApplyTabSplit(message));
+    }
+
+    /// <summary>
+    /// 标签栏"从组合中移出"请求：把成员盒从宿主拆出为独立盒子。
+    /// 复用 <see cref="DissolveAsync"/>——它内部判断成员盒→单拆、宿主→整组解散。
+    /// 消息只从成员标签的右键菜单发出（宿主自身标签菜单禁用），语义即单拆。
+    /// </summary>
+    private void ApplyTabSplit(BoxTabSplitRequestedMessage message)
+    {
+        FireAndForget.Run(
+            DissolveAsync(message.MemberId),
+            _logger,
+            $"Failed to detach box {message.MemberId:N} from its tab host.");
     }
 
     public event EventHandler<BoxItemsChangedEventArgs>? ItemsChanged;

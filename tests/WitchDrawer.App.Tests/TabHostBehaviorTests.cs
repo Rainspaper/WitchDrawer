@@ -195,6 +195,71 @@ public sealed class TabHostBehaviorTests
         }
     }
 
+    [Fact]
+    public async Task CoverView_TakesItsSizeFromTheDrawerCoverHandle()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var (drawerService, todoService) = await CreateServicesAsync(root);
+            var host = CreateViewModel("工具", BoxType.Mapping, drawerService, todoService);
+            var member = CreateViewModel("AI", BoxType.Mapping, drawerService, todoService);
+            host.IsTabHost = true;
+            host.InitializeTabs([member]);
+
+            // 全局"抽屉式收纳"打开时，网格模式下发显示的是抽屉封面（封面自带尺寸手柄）。
+            await drawerService.SetSettingAsync(DesktopBoxViewModel.DrawerStyleSettingKey, "true");
+            await host.LoadDrawerStyleAsync();
+            Assert.True(host.IsDrawerCollapsed);
+
+            // 拖封面手柄 → 统一外宽跟着封面走，窗口和封面只会有一套尺寸手柄。
+            host.ResizeDrawerCover(260, 200);
+            Assert.Equal(
+                host.DrawerCoverWidth + DesktopBoxViewModel.WindowBorderInset,
+                host.HostBoxWidth,
+                precision: 6);
+            // 封面视图高度由封面自己决定：不钉固定高度，交给窗口自适应。
+            Assert.False(host.HasUnifiedHeight);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task HostSelfTab_IsMarked_SoItCannotBeDetached()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var (drawerService, todoService) = await CreateServicesAsync(root);
+            var host = CreateViewModel("工具", BoxType.Mapping, drawerService, todoService);
+            var member = CreateViewModel("AI", BoxType.Mapping, drawerService, todoService);
+
+            // 单盒（未合并）：不是宿主，无"宿主自身标签"概念。
+            Assert.False(host.IsHostSelfTab);
+
+            host.IsTabHost = true;
+            host.InitializeTabs([member]);
+
+            // 宿主自身标签 = TabVms 的第一个（宿主盒本身），拆出宿主等于解散整组，
+            // 语义上不允许——它必须被标记出来供 UI 禁用"从组合中移出"。
+            Assert.True(host.IsHostSelfTab);
+            // 成员标签不是宿主自身，可拆出。
+            Assert.False(member.IsHostSelfTab);
+
+            // 切换标签后标记不随活动态漂移：宿主仍是自身标签、成员仍是成员。
+            host.ActiveTabVm = member;
+            Assert.True(host.IsHostSelfTab);
+            Assert.False(member.IsHostSelfTab);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
     private static string CreateTempRoot()
     {
         var root = Path.Combine(

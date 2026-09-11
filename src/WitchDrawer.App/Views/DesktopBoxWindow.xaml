@@ -378,6 +378,16 @@
                                         CommandParameter="{Binding BoxId}"
                                         Style="{StaticResource TabChipButtonStyle}"
                                         ToolTip="{Binding TabLabel}">
+                                    <Button.ContextMenu>
+                                        <!-- ContextMenu 不在可视树，DataContext 不自动继承：
+                                             显式桥回按钮（PlacementTarget）的 DataContext。 -->
+                                        <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                                            <MenuItem Header="从组合中移出"
+                                                      Click="OnDetachTabMenuItemClick"
+                                                      CommandParameter="{Binding BoxId}"
+                                                      IsEnabled="{Binding IsHostSelfTab, Converter={StaticResource InverseBooleanConverter}}" />
+                                        </ContextMenu>
+                                    </Button.ContextMenu>
                                     <!-- 宽度 = 标签栏宽度 ÷ 标签数（结果夹在 TabChipMetrics 的上下限内）：
                                          盒子越窄标签越窄，整排标签始终放得下，不会把标签截掉；
                                          名字过长按格宽截断，完整的看 ToolTip。 -->
@@ -665,6 +675,10 @@
                             <DataTrigger Binding="{Binding IsRolledUp}" Value="True">
                                 <Setter Property="Visibility" Value="Collapsed" />
                             </DataTrigger>
+                            <!-- 抽屉封面视图自带尺寸手柄：这里让位，避免同一个角出现两个斜杠 -->
+                            <DataTrigger Binding="{Binding IsDrawerCollapsed}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
                         </Style.Triggers>
                     </Style>
                 </Thumb.Style>
@@ -698,6 +712,10 @@
                                 <Setter Property="Visibility" Value="Visible" />
                             </DataTrigger>
                             <DataTrigger Binding="{Binding IsRolledUp}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                            <!-- 抽屉封面视图自带尺寸手柄：这里让位，避免同一个角出现两个斜杠 -->
+                            <DataTrigger Binding="{Binding IsDrawerCollapsed}" Value="True">
                                 <Setter Property="Visibility" Value="Collapsed" />
                             </DataTrigger>
                         </Style.Triggers>
@@ -735,6 +753,10 @@
                                 <Setter Property="Visibility" Value="Visible" />
                             </DataTrigger>
                             <DataTrigger Binding="{Binding IsRolledUp}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                            <!-- 抽屉封面视图自带尺寸手柄：这里让位，避免同一个角出现两个斜杠 -->
+                            <DataTrigger Binding="{Binding IsDrawerCollapsed}" Value="True">
                                 <Setter Property="Visibility" Value="Collapsed" />
                             </DataTrigger>
                         </Style.Triggers>

@@ -210,6 +210,26 @@ public partial class DesktopBoxWindow : Window
         }
     }
 
+    /// <summary>
+    /// 标签右键菜单"从组合中移出"：把该标签（成员盒）拆出为独立盒子。
+    /// 菜单项对宿主自身标签已禁用（IsHostSelfTab → IsEnabled=false），此处双保险：
+    /// 只对非宿主自身的成员标签发送拆分请求。
+    /// </summary>
+    private void OnDetachTabMenuItemClick(object sender, RoutedEventArgs e)
+    {
+        // 点击事件源在 MenuItem 内部，sender 即菜单项自身。
+        if (sender is MenuItem { CommandParameter: Guid memberId }
+            && ViewModel is { IsTabHost: true } vm)
+        {
+            var target = vm.TabVms.FirstOrDefault(t => t.BoxId == memberId);
+            if (target is not null && !target.IsHostSelfTab)
+            {
+                WeakReferenceMessenger.Default.Send(
+                    new BoxTabSplitRequestedMessage(memberId));
+            }
+        }
+    }
+
     private void SendToBottom()
     {
         if (!ShouldSendToBottom(_desktopIsForeground))
