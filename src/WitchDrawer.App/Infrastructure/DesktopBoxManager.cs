@@ -353,6 +353,27 @@ public sealed class DesktopBoxManager
                     && affectedWindow.IsVisible)
                 {
                     await affectedWindow.ViewModel.LoadAsync();
+                    return;
+                }
+
+                // 该盒可能是合并宿主里的标签成员（成员盒没有独立窗口，_windows 查不到）：
+                // 找到承载它的宿主窗口，刷新对应成员 VM，否则新增内容不会出现在标签页里。
+                var hostId = await _tabGroupService.GetHostAsync(boxId);
+                if (hostId is Guid host
+                    && _windows.TryGetValue(host, out var hostWindow)
+                    && hostWindow.IsVisible)
+                {
+                    var memberVm = hostWindow.ViewModel.TabVms
+                        .FirstOrDefault(vm => vm.BoxId == boxId);
+                    if (memberVm is not null)
+                    {
+                        // LoadAsync 内部对映射盒先同步映射文件夹再重载 items——
+                        // 成员盒的新增引用因此显示到标签页。
+                        await memberVm.LoadAsync();
+                        _logger.Info(
+                            $"Refreshed tab member {boxId:N} inside host {host:N} "
+                            + "after mapping folder change.");
+                    }
                 }
 
                 return;

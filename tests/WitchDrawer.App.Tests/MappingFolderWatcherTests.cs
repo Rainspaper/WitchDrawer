@@ -54,6 +54,41 @@ public sealed class MappingFolderWatcherTests
     }
 
     [Fact]
+    public async Task AddSync_ImportsNewFileAndInvokesCallback()
+    {
+        using var workspace = await TestWorkspace.CreateAsync();
+        var mappingBox = workspace.GetMappingBox();
+
+        var folder = Path.Combine(workspace.Root, "watch-folder");
+        Directory.CreateDirectory(folder);
+        await workspace.Service.AddMappingFolderAsync(mappingBox.Id, folder);
+        await workspace.Service.SyncMappingFoldersAsync(mappingBox.Id);
+        Assert.Empty(await workspace.Service.GetItemsAsync(mappingBox.Id));
+
+        var syncSignaled = new TaskCompletionSource<Guid>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var watcher = new MappingFolderWatcher(
+            workspace.Service,
+            id =>
+            {
+                syncSignaled.TrySetResult(id);
+                return Task.CompletedTask;
+            },
+            workspace.Logger,
+            debounceMilliseconds: 50);
+        await watcher.SynchronizeAsync(mappingBox.Id);
+
+        // 往源文件夹新增文件：watcher 应触发同步 → Core 导入新引用 → 回调通知 UI 刷新。
+        File.WriteAllText(Path.Combine(folder, "NewApp.exe"), "new");
+        var notifiedBoxId = await syncSignaled.Task.WaitAsync(TimeSpan.FromSeconds(8));
+
+        Assert.Equal(mappingBox.Id, notifiedBoxId);
+        var items = await workspace.Service.GetItemsAsync(mappingBox.Id);
+        Assert.Single(items);
+        Assert.Contains(items, item => item.DisplayName == "NewApp.exe");
+    }
+
+    [Fact]
     public async Task Error_RebuildsWatcher_SoLaterDeletesStillSync()
     {
         using var workspace = await TestWorkspace.CreateAsync();
