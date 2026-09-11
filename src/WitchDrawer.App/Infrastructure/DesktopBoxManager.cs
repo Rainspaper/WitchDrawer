@@ -79,7 +79,8 @@ public sealed class DesktopBoxManager
         // 映射文件夹变化 -> 同步新项 -> 刷新对应盒子（实时自动识别）。
         _mappingFolderWatcher = new MappingFolderWatcher(
             drawerService,
-            boxId => RefreshItemsAsync(boxId));
+            boxId => RefreshItemsAsync(boxId),
+            _logger);
         _foregroundWindowMonitor = new ForegroundWindowMonitor();
         _foregroundWindowMonitor.ForegroundWindowChanged += OnForegroundWindowChanged;
         _desktopIsForeground = ForegroundWindowMonitor.IsDesktopWindow(
