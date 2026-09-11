@@ -782,7 +782,7 @@
                   Panel.ZIndex="3"
                   Width="{Binding TodoBoxWidth}"
                   Height="{Binding TodoBoxHeight}"
-                  MinWidth="220"
+                  MinWidth="160"
                   MinHeight="190"
                   MaxHeight="800"
                   Margin="8,4,8,10"
@@ -911,6 +911,11 @@
                              ScrollViewer.VerticalScrollBarVisibility="Auto"
                              VirtualizingPanel.IsVirtualizing="True"
                              VirtualizingPanel.VirtualizationMode="Recycling">
+                        <ListBox.Resources>
+                            <!-- 与列表模式/主窗口一致的细灰滚动条，替换系统默认蓝。 -->
+                            <Style TargetType="{x:Type ScrollBar}"
+                                   BasedOn="{StaticResource SlimListScrollBarStyle}" />
+                        </ListBox.Resources>
                         <ListBox.ItemContainerStyle>
                             <Style TargetType="{x:Type ListBoxItem}">
                                 <Setter Property="HorizontalContentAlignment" Value="Stretch" />

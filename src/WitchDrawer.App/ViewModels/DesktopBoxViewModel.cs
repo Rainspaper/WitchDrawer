@@ -63,7 +63,7 @@ public sealed class DesktopBoxViewModel : ObservableObject
     internal const double MinimumMappingListWidth = 180;
     internal const double MaximumMappingListWidth = 720;
     internal const double DefaultTodoBoxWidth = 310;
-    internal const double MinimumTodoBoxWidth = 220;
+    internal const double MinimumTodoBoxWidth = 160;
     internal const double MaximumTodoBoxWidth = 720;
     internal const double MinimumTodoBoxHeight = 190;
     internal const double MaximumTodoBoxHeight = 800;

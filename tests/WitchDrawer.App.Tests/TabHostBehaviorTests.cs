@@ -330,6 +330,29 @@ public sealed class TabHostBehaviorTests
         }
     }
 
+        [Fact]
+    public async Task TodoBoxWidth_CanShrinkToReducedMinimum()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var (drawerService, todoService) = await CreateServicesAsync(root);
+            var todo = CreateViewModel("待办", BoxType.Todo, drawerService, todoService);
+
+            // 待办盒宽度应能缩到比默认更窄的下限（此前硬夹在 220，用户无法再缩小）。
+            todo.ResizeTodoBoxWidth(160);
+            Assert.Equal(160, todo.TodoBoxWidth);
+
+            // 继续缩小被夹在最小值，不再更低。
+            todo.ResizeTodoBoxWidth(50);
+            Assert.Equal(160, todo.TodoBoxWidth);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
     private static string CreateTempRoot()
     {
         var root = Path.Combine(
