@@ -157,6 +157,68 @@ public sealed class BoxTabGroupService(
     }
 
     /// <summary>
+    /// 移出宿主盒自身：若组内还有其他成员，第一个成员继任为新宿主（组不散）；
+    /// 若没有成员，整体解散。
+    /// </summary>
+    public async Task RemoveHostWithSuccessionAsync(
+        Guid hostId,
+        CancellationToken cancellationToken = default)
+    {
+        var members = (await GetMembersAsync(hostId, cancellationToken)).ToList();
+        if (members.Count == 0)
+        {
+            // 不是宿主（或空组）：无操作。
+            return;
+        }
+
+        // 原宿主的成员列表重挂到继任宿主（第一个成员）名下，
+        // 并把原宿主自身与继任者自己都从列表中移除（宿主不列在自身成员列表里）。
+        var successorId = members[0];
+        var remaining = members.Where(id => id != hostId && id != successorId).ToList();
+
+        await drawerService.DeleteSettingAsync(
+            HostSettingKeyPrefix + hostId.ToString("N"),
+            cancellationToken);
+        _hostCache.TryRemove(hostId, out _);
+
+        if (remaining.Count == 0)
+        {
+            // 没有可继任的成员：组整体解散，所有成员的归属键清掉（含继任候选本身）。
+            foreach (var memberId in members)
+            {
+                await drawerService.DeleteSettingAsync(
+                    MemberSettingKeyPrefix + memberId.ToString("N"),
+                    cancellationToken);
+                _memberToHostCache.TryRemove(memberId, out _);
+            }
+
+            logger.Info(
+                $"Dissolved tab group for host {hostId:N} (no successor member).");
+            return;
+        }
+
+        // 继任宿主接管成员列表；各成员（含继任者自己）的归属键改为指向继任宿主。
+        await PersistMembersAsync(successorId, remaining, cancellationToken);
+        foreach (var memberId in remaining)
+        {
+            await drawerService.SetSettingAsync(
+                MemberSettingKeyPrefix + memberId.ToString("N"),
+                successorId.ToString("N"),
+                cancellationToken);
+            _memberToHostCache[memberId] = successorId;
+        }
+
+        // 继任者从"原宿主成员"变为"宿主"：清掉它指向原宿主的归属键。
+        await drawerService.DeleteSettingAsync(
+            MemberSettingKeyPrefix + successorId.ToString("N"),
+            cancellationToken);
+        _memberToHostCache.TryRemove(successorId, out _);
+        logger.Info(
+            $"Detached host {hostId:N}; box {successorId:N} succeeded as tab host "
+            + $"with {remaining.Count} member(s).");
+    }
+
+    /// <summary>
     /// 解散宿主盒的整组：清空所有成员归属与宿主键。成员盒本身不受影响。
     /// </summary>
     public async Task DissolveAsync(

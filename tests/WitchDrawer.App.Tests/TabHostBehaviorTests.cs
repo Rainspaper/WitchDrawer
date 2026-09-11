@@ -228,7 +228,7 @@ public sealed class TabHostBehaviorTests
     }
 
     [Fact]
-    public async Task HostSelfTab_IsMarked_SoItCannotBeDetached()
+    public async Task EveryTab_CanBeDetached_IncludingHostItself()
     {
         var root = CreateTempRoot();
         try
@@ -237,22 +237,58 @@ public sealed class TabHostBehaviorTests
             var host = CreateViewModel("工具", BoxType.Mapping, drawerService, todoService);
             var member = CreateViewModel("AI", BoxType.Mapping, drawerService, todoService);
 
-            // 单盒（未合并）：不是宿主，无"宿主自身标签"概念。
-            Assert.False(host.IsHostSelfTab);
-
             host.IsTabHost = true;
             host.InitializeTabs([member]);
 
-            // 宿主自身标签 = TabVms 的第一个（宿主盒本身），拆出宿主等于解散整组，
-            // 语义上不允许——它必须被标记出来供 UI 禁用"从组合中移出"。
-            Assert.True(host.IsHostSelfTab);
-            // 成员标签不是宿主自身，可拆出。
-            Assert.False(member.IsHostSelfTab);
+            // 所有标签（含宿主自身）都应能通过右键菜单移出：
+            // 移出宿主时由服务层让成员继任宿主，组不散。
+            // 这里验证 VM 层不阻止任何标签：TabVms 里每个 VM 都对应一个可移出标签。
+            Assert.Equal(2, host.TabVms.Count);
+            Assert.Contains(host, host.TabVms);
+            Assert.Contains(member, host.TabVms);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
 
-            // 切换标签后标记不随活动态漂移：宿主仍是自身标签、成员仍是成员。
-            host.ActiveTabVm = member;
-            Assert.True(host.IsHostSelfTab);
-            Assert.False(member.IsHostSelfTab);
+    [Fact]
+    public async Task CopySizeSnapshotFromAsync_WritesIndependentSizeKeys()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var (drawerService, todoService) = await CreateServicesAsync(root);
+            var host = CreateViewModel("工具", BoxType.Mapping, drawerService, todoService);
+            var member = CreateViewModel("AI", BoxType.Mapping, drawerService, todoService);
+
+            // 宿主设定自定义宽高（模拟合并后用户在宿主上调整过尺寸）。
+            host.ResizeMappingListWidth(300);
+            host.ResizeMappingListHeight(340);
+
+            // 快照复制：宿主的当前宽高写入成员的独立设置键（复制一份，不是引用）。
+            await member.CopySizeSnapshotFromAsync(host);
+
+            // 成员的独立键已写入，值等于宿主的当前宽高。
+            Assert.Equal(
+                "300",
+                await drawerService.GetSettingAsync(
+                    DesktopBoxViewModel.GetMappingListWidthSettingKey(member.BoxId)));
+            Assert.Equal(
+                "340",
+                await drawerService.GetSettingAsync(
+                    DesktopBoxViewModel.GetMappingListHeightSettingKey(member.BoxId)));
+
+            // 快照是单向复制：只写成员的键，不写宿主的键（宿主尺寸由宿主自己管理）。
+            Assert.Null(await drawerService.GetSettingAsync(
+                DesktopBoxViewModel.GetMappingListWidthSettingKey(host.BoxId)));
+
+            // 成员重新装载后保持合并时的尺寸（移出即恢复该尺寸，而不是回退默认值）。
+            await member.LoadMappingListWidthAsync();
+            await member.LoadMappingListHeightAsync();
+            Assert.Equal(300, member.MappingListWidth);
+            Assert.Equal(340, member.MappingListHeight);
         }
         finally
         {

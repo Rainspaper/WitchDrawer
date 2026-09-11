@@ -125,14 +125,13 @@ public sealed class DesktopBoxManager
     }
 
     /// <summary>
-    /// 标签栏"从组合中移出"请求：把成员盒从宿主拆出为独立盒子。
-    /// 复用 <see cref="DissolveAsync"/>——它内部判断成员盒→单拆、宿主→整组解散。
-    /// 消息只从成员标签的右键菜单发出（宿主自身标签菜单禁用），语义即单拆。
+    /// 标签栏"从组合中移出"请求：把任意标签（成员或宿主自身）拆出为独立盒子。
+    /// 走 <see cref="DetachAsync"/>：成员→单拆，宿主→组内成员继任宿主。
     /// </summary>
     private void ApplyTabSplit(BoxTabSplitRequestedMessage message)
     {
         FireAndForget.Run(
-            DissolveAsync(message.MemberId),
+            DetachAsync(message.MemberId),
             _logger,
             $"Failed to detach box {message.MemberId:N} from its tab host.");
     }
@@ -629,6 +628,7 @@ public sealed class DesktopBoxManager
     /// <summary>
     /// 把成员盒合并进宿主盒：持久化宿主/成员关系，隐藏成员的独立桌面窗口，
     /// 刷新宿主窗口使其重新装载各成员标签页。
+    /// 合并时把宿主的当前宽高快照复制到成员的独立设置键：成员移出后保持合并时的尺寸。
     /// </summary>
     public async Task MergeAsync(Guid memberId, Guid hostId)
     {
@@ -638,8 +638,11 @@ public sealed class DesktopBoxManager
         }
 
         await _tabGroupService.MergeAsync(memberId, hostId);
-        if (_windows.TryGetValue(memberId, out var memberWindow))
+        // 快照必须在窗口重建前做：此时两个 VM 都还活着。
+        if (_windows.TryGetValue(hostId, out var hostWindow)
+            && _windows.TryGetValue(memberId, out var memberWindow))
         {
+            await memberWindow.ViewModel.CopySizeSnapshotFromAsync(hostWindow.ViewModel);
             memberWindow.Hide();
         }
 
@@ -666,6 +669,37 @@ public sealed class DesktopBoxManager
         {
             // 该盒是宿主（或不是组成员）：整体解散组。
             await _tabGroupService.DissolveAsync(boxId);
+        }
+
+        await RefreshAsync();
+    }
+
+    /// <summary>
+    /// 把任意标签从组合中拆出为独立盒子：
+    /// 成员盒→只把自己移出；宿主盒自身→组内第一个成员继任为新宿主（组不散），
+    /// 被移出的宿主成为独立盒子。刷新后各盒恢复独立窗口。
+    /// </summary>
+    public async Task DetachAsync(Guid boxId)
+    {
+        if (_closing)
+        {
+            return;
+        }
+
+        if (await _tabGroupService.GetHostAsync(boxId) is not null)
+        {
+            // 该盒是某组的成员：只把自己从宿主移除。
+            await _tabGroupService.RemoveMemberAsync(boxId);
+        }
+        else if (await _tabGroupService.IsHostAsync(boxId))
+        {
+            // 该盒是宿主自身：第一个成员继任为宿主，原宿主拆出为独立盒。
+            await _tabGroupService.RemoveHostWithSuccessionAsync(boxId);
+        }
+        else
+        {
+            // 不是任何组的成员：无需操作。
+            return;
         }
 
         await RefreshAsync();

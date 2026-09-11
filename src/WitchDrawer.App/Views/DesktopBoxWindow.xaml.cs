@@ -211,9 +211,8 @@ public partial class DesktopBoxWindow : Window
     }
 
     /// <summary>
-    /// 标签右键菜单"从组合中移出"：把该标签（成员盒）拆出为独立盒子。
-    /// 菜单项对宿主自身标签已禁用（IsHostSelfTab → IsEnabled=false），此处双保险：
-    /// 只对非宿主自身的成员标签发送拆分请求。
+    /// 标签右键菜单"从组合中移出"：把该标签（成员盒或宿主自身）拆出为独立盒子。
+    /// 宿主自身标签也会发送请求——Manager 侧处理"成员继任宿主"语义。
     /// </summary>
     private void OnDetachTabMenuItemClick(object sender, RoutedEventArgs e)
     {
@@ -222,7 +221,7 @@ public partial class DesktopBoxWindow : Window
             && ViewModel is { IsTabHost: true } vm)
         {
             var target = vm.TabVms.FirstOrDefault(t => t.BoxId == memberId);
-            if (target is not null && !target.IsHostSelfTab)
+            if (target is not null)
             {
                 WeakReferenceMessenger.Default.Send(
                     new BoxTabSplitRequestedMessage(memberId));

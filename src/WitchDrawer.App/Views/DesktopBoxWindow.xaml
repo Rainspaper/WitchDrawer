@@ -384,8 +384,7 @@
                                         <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
                                             <MenuItem Header="从组合中移出"
                                                       Click="OnDetachTabMenuItemClick"
-                                                      CommandParameter="{Binding BoxId}"
-                                                      IsEnabled="{Binding IsHostSelfTab, Converter={StaticResource InverseBooleanConverter}}" />
+                                                      CommandParameter="{Binding BoxId}" />
                                         </ContextMenu>
                                     </Button.ContextMenu>
                                     <!-- 宽度 = 标签栏宽度 ÷ 标签数（结果夹在 TabChipMetrics 的上下限内）：

@@ -682,12 +682,6 @@ public sealed class DesktopBoxViewModel : ObservableObject
     /// <summary>标签页 VM 列表（含宿主自身作为第一个标签）。</summary>
     public ObservableCollection<DesktopBoxViewModel> TabVms => _tabVms;
 
-    /// <summary>
-    /// 是否为宿主盒自身的标签（TabVms 的第一个）。宿主自身没有上级组，
-    /// 拆出它等于解散整组——UI 用它禁用"从组合中移出"。
-    /// </summary>
-    public bool IsHostSelfTab => IsTabHost && ReferenceEquals(_tabVms.FirstOrDefault(), this);
-
     /// <summary>当前标签是否为宿主窗口中选中的活动标签（用于 Tab 栏高亮）。</summary>
     public bool IsActiveTab
     {
@@ -816,8 +810,6 @@ public sealed class DesktopBoxViewModel : ObservableObject
             OnPropertyChanged(nameof(HostBoxWidth));
             OnPropertyChanged(nameof(HostBoxHeight));
             OnPropertyChanged(nameof(HasUnifiedHeight));
-            // 宿主/非宿主切换会改变"宿主自身标签"的标记（菜单禁用项跟着变）。
-            OnPropertyChanged(nameof(IsHostSelfTab));
         }
     }
 
@@ -837,8 +829,6 @@ public sealed class DesktopBoxViewModel : ObservableObject
         IsActiveTab = true;
         OnPropertyChanged(nameof(TabVms));
         OnPropertyChanged(nameof(ActiveTabVm));
-        // 标签列表就绪后"宿主自身标签"标记才可判定（TabVms[0] == this）。
-        OnPropertyChanged(nameof(IsHostSelfTab));
         // 宿主自身就是第一个标签：初始化后按统一宽度重排一次网格，否则要等第一次切标签才生效。
         ApplyMergedGridFlowLayout();
         UpdateGridCanvasSize();
@@ -1614,6 +1604,40 @@ public sealed class DesktopBoxViewModel : ObservableObject
         catch (Exception exception)
         {
             _logger.Error(exception, "Failed to save mapping list width.");
+        }
+    }
+
+    /// <summary>
+    /// 把宿主的当前尺寸快照复制到本盒的独立设置键（复制一份，互不影响）。
+    /// 合并发生时调用：这样成员盒移出后保持合并时的窗口尺寸，而不是回退默认值。
+    /// 只复制映射盒相关的宽度/高度（宿主统一尺寸的来源），封面尺寸等由各盒自己管理。
+    /// </summary>
+    public async Task CopySizeSnapshotFromAsync(
+        DesktopBoxViewModel source,
+        CancellationToken cancellationToken = default)
+    {
+        if (source is null || !IsMappingBox)
+        {
+            return;
+        }
+
+        try
+        {
+            var width = source.MappingListWidth;
+            await _drawerService.SetSettingAsync(
+                GetMappingListWidthSettingKey(BoxId),
+                width.ToString("R", CultureInfo.InvariantCulture),
+                cancellationToken);
+
+            var height = source.MappingListHeight;
+            await _drawerService.SetSettingAsync(
+                GetMappingListHeightSettingKey(BoxId),
+                height.ToString("R", CultureInfo.InvariantCulture),
+                cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            _logger.Error(exception, "Failed to copy size snapshot from host.");
         }
     }
 

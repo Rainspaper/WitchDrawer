@@ -180,6 +180,58 @@ public sealed class BoxTabGroupServiceTests
         Assert.Single(members);
     }
 
+    [Fact]
+    public async Task RemoveHostWithSuccessionAsync_FirstMemberBecomesNewHost()
+    {
+        await using var workspace = await TestWorkspace.CreateAsync();
+        var hostId = Guid.NewGuid();
+        var member1 = Guid.NewGuid();
+        var member2 = Guid.NewGuid();
+        await workspace.Service.MergeAsync(member1, hostId);
+        await workspace.Service.MergeAsync(member2, hostId);
+
+        // 宿主自身移出：成员1继任为宿主，成员2仍归属新宿主，组不散。
+        await workspace.Service.RemoveHostWithSuccessionAsync(hostId);
+
+        // 原宿主移出后不再是宿主，也不归属任何组。
+        Assert.Empty(await workspace.Service.GetMembersAsync(hostId));
+        Assert.Null(await workspace.Service.GetHostAsync(hostId));
+        Assert.False(await workspace.Service.IsHostAsync(hostId));
+        // 成员1继任为宿主：它本身无归属，成员列表是剩下的成员2。
+        Assert.Null(await workspace.Service.GetHostAsync(member1));
+        Assert.Equal([member2], await workspace.Service.GetMembersAsync(member1));
+        Assert.True(await workspace.Service.IsHostAsync(member1));
+        // 成员2归属新宿主 member1。
+        Assert.Equal(member1, await workspace.Service.GetHostAsync(member2));
+    }
+
+    [Fact]
+    public async Task RemoveHostWithSuccessionAsync_LastMemberDissolvesGroup()
+    {
+        await using var workspace = await TestWorkspace.CreateAsync();
+        var hostId = Guid.NewGuid();
+        var member = Guid.NewGuid();
+        await workspace.Service.MergeAsync(member, hostId);
+
+        // 只剩一个成员时移出宿主：组内无成员可继任，整体解散。
+        await workspace.Service.RemoveHostWithSuccessionAsync(hostId);
+
+        Assert.Empty(await workspace.Service.GetMembersAsync(hostId));
+        Assert.Null(await workspace.Service.GetHostAsync(member));
+        Assert.False(await workspace.Service.IsHostAsync(hostId));
+    }
+
+    [Fact]
+    public async Task RemoveHostWithSuccessionAsync_NoopForNonHost()
+    {
+        await using var workspace = await TestWorkspace.CreateAsync();
+        var nonHost = Guid.NewGuid();
+
+        await workspace.Service.RemoveHostWithSuccessionAsync(nonHost);
+
+        Assert.False(await workspace.Service.IsHostAsync(nonHost));
+    }
+
     private sealed class TestWorkspace : IAsyncDisposable
     {
         private TestWorkspace(

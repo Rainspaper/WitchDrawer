@@ -6,7 +6,6 @@
         <infra:ZeroToVisibilityConverter x:Key="ZeroToVisibilityConverter" />
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
         <infra:InverseBooleanToVisibilityConverter x:Key="InverseBooleanToVisibilityConverter" />
-        <infra:InverseBooleanConverter x:Key="InverseBooleanConverter" />
         <infra:NonEmptyToVisibilityConverter x:Key="NonEmptyToVisibilityConverter" />
         <infra:BoxVisualStyleEqualityConverter x:Key="BoxVisualStyleEqualityConverter" />
 
