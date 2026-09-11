@@ -294,9 +294,9 @@
                                                     <Border x:Name="ThumbSurface"
                                                             Width="3"
                                                             HorizontalAlignment="Center"
-                                                            Background="{DynamicResource AccentBrush}"
+                                                            Background="{DynamicResource TextMutedBrush}"
                                                             CornerRadius="1.5"
-                                                            Opacity="0.55" />
+                                                            Opacity="0.5" />
                                                 </Grid>
                                                 <ControlTemplate.Triggers>
                                                     <Trigger Property="IsMouseOver" Value="True">
