@@ -62,6 +62,41 @@ public sealed class DesktopBoxRollUpStateTests
         }
     }
 
+    [Fact]
+    public async Task RollUpExpandedTargetHeight_ReturnsDraggedHeightWhenSet_NaNOtherwise()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "WitchDrawerTests",
+            Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            var paths = new AppPaths(root);
+            var repository = new DrawerRepository(paths.DatabasePath);
+            var drawerService = new DrawerService(paths, repository);
+            await drawerService.InitializeAsync();
+            var box = await drawerService.CreateBoxAsync("卷起高度测试盒", BoxType.Mapping);
+            var viewModel = CreateViewModel(box, drawerService, repository);
+
+            // 未手动拖高过：展开目标高度 = NaN（展开时按内容自适应，即全部条目显示）。
+            Assert.True(double.IsNaN(viewModel.RollUpExpandedTargetHeight));
+
+            // 用户手动拖高后：展开目标高度 = 手动设定值——
+            // 卷起再悬停展开时恢复该高度，而不是内容自适应高度。
+            viewModel.ResizeMappingListHeight(340);
+            Assert.Equal(340, viewModel.RollUpExpandedTargetHeight);
+            Assert.True(viewModel.RollUpExpandedTargetHeight > 0);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
     private static DesktopBoxViewModel CreateViewModel(
         Box box,
         DrawerService drawerService,

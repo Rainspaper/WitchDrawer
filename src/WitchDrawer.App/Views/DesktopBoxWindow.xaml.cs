@@ -1573,10 +1573,12 @@ public partial class DesktopBoxWindow : Window
         }
 
         _isRollTransitioning = true;
+        double startWidth = 0;
+        double startHeight = 0;
         try
         {
-            var startWidth = ActualWidth;
-            var startHeight = ActualHeight;
+            startWidth = ActualWidth;
+            startHeight = ActualHeight;
             SizeToContent = SizeToContent.Manual;
             MinHeight = 0;
             Width = startWidth;
@@ -1585,7 +1587,12 @@ public partial class DesktopBoxWindow : Window
             ViewModel.ApplyRollUpState(rollUp);
             await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.DataBind);
             WindowBorder.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            var targetHeight = WindowBorder.DesiredSize.Height;
+            // 展开时优先恢复用户手动拖定的高度；未拖过再按内容自适应（全部条目显示）。
+            var targetHeight = !rollUp
+                && ViewModel.RollUpExpandedTargetHeight > 0
+                && ViewModel.RollUpExpandedTargetHeight < double.PositiveInfinity
+                    ? ViewModel.RollUpExpandedTargetHeight
+                    : WindowBorder.DesiredSize.Height;
 
             if (rollUp)
             {
@@ -1600,10 +1607,26 @@ public partial class DesktopBoxWindow : Window
         {
             BeginAnimation(WidthProperty, null);
             BeginAnimation(HeightProperty, null);
-            SizeToContent = SizeToContent.WidthAndHeight;
-            ClearValue(MinHeightProperty);
-            ClearValue(WidthProperty);
-            ClearValue(HeightProperty);
+            if (!rollUp
+                && ViewModel.RollUpExpandedTargetHeight is double manualHeight
+                && manualHeight > 0
+                && manualHeight < double.PositiveInfinity)
+            {
+                // 展开 + 用户手动拖过高度：锁定为手动值，不交还内容自适应——
+                // 否则窗口退回"所有条目全显示"的内容高度，手动高度在卷起/展开间丢失。
+                SizeToContent = SizeToContent.Manual;
+                ClearValue(MinHeightProperty);
+                Width = startWidth;
+                Height = manualHeight;
+            }
+            else
+            {
+                SizeToContent = SizeToContent.WidthAndHeight;
+                ClearValue(MinHeightProperty);
+                ClearValue(WidthProperty);
+                ClearValue(HeightProperty);
+            }
+
             if (!rollUp)
             {
                 await RefreshGridLayoutAfterRollTransitionAsync();

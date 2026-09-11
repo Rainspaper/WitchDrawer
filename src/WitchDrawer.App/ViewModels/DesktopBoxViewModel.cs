@@ -238,6 +238,17 @@ public sealed class DesktopBoxViewModel : ObservableObject
     public double MappingListRequestedHeight =>
         IsTabHost && IsMappingListMode ? double.NaN : _mappingListHeight;
 
+    /// <summary>
+    /// RollUp 卷起后展开（含悬停自动展开）时窗口应恢复的高度：
+    /// 用户手动拖过的列表/统一高度（<c>_mappingListHeight</c>）；
+    /// 未拖过返回 NaN —— 展开时按内容自适应（全部条目显示）。
+    /// 否则卷起再展开会退化成"内容全显示高度"，丢失用户手动设定的高度。
+    /// </summary>
+    public double RollUpExpandedTargetHeight =>
+        _hasCustomMappingListHeight && double.IsFinite(_mappingListHeight) && _mappingListHeight > 0
+            ? _mappingListHeight
+            : double.NaN;
+
     public double TodoBoxWidth => _todoBoxWidth;
     public double TodoBoxHeight => _todoBoxHeight;
 
@@ -762,6 +773,7 @@ public sealed class DesktopBoxViewModel : ObservableObject
         OnPropertyChanged(nameof(MappingListWidth));
         OnPropertyChanged(nameof(MappingListHeight));
         OnPropertyChanged(nameof(MappingListRequestedHeight));
+        OnPropertyChanged(nameof(RollUpExpandedTargetHeight));
         // 统一外宽（网格/列表兼容方案）：跟随当前标签是否为映射盒，以及它的内容宽度。
         OnPropertyChanged(nameof(UsesUnifiedBoxSize));
         OnPropertyChanged(nameof(HostBoxWidth));
@@ -2226,6 +2238,7 @@ public sealed class DesktopBoxViewModel : ObservableObject
         OnPropertyChanged(nameof(HostBoxHeight));
         OnPropertyChanged(nameof(HasUnifiedHeight));
         OnPropertyChanged(nameof(MappingListRequestedHeight));
+        OnPropertyChanged(nameof(RollUpExpandedTargetHeight));
     }
 
     /// <summary>
