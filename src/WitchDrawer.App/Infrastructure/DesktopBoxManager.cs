@@ -1832,13 +1832,15 @@ public sealed class DesktopBoxManager
 
             // Align with another box's equal height.
             var equalHeightBottom = currentTop + heightB;
-            if (Math.Abs(currentBottom - equalHeightBottom) <= snapThreshold)
+            var equalHeightActive = Math.Abs(currentBottom - equalHeightBottom) <= snapThreshold;
+            if (equalHeightActive)
             {
                 AddHorizontalGuide(horizontalGuideYs, ref horizontalGuideXMin, ref horizontalGuideXMax, equalHeightBottom, currentLeft, leftB, currentRight, rightB);
             }
 
             // Align bottom edge with another box's bottom edge.
-            if (Math.Abs(currentBottom - bottomB) <= snapThreshold)
+            // 仅在等高线未命中时画：等高命中时它与等高线同一语义，两线并排会重影。
+            if (!equalHeightActive && Math.Abs(currentBottom - bottomB) <= snapThreshold)
             {
                 AddHorizontalGuide(horizontalGuideYs, ref horizontalGuideXMin, ref horizontalGuideXMax, bottomB, currentLeft, leftB, currentRight, rightB);
             }
@@ -1943,13 +1945,16 @@ public sealed class DesktopBoxManager
             // Align with another box's equal width (right edge follows the other's
             // right edge when the widths match).
             var equalWidthRight = currentLeft + widthB;
-            if (Math.Abs(currentRight - equalWidthRight) <= snapThreshold)
+            var equalWidthActive = Math.Abs(currentRight - equalWidthRight) <= snapThreshold;
+            if (equalWidthActive)
             {
                 AddVerticalGuide(verticalGuideXs, ref verticalGuideYMin, ref verticalGuideYMax, equalWidthRight, currentTop, topB, currentBottom, bottomB);
             }
 
             // Align right edge with another box's right edge.
-            if (Math.Abs(currentRight - rightB) <= snapThreshold)
+            // 仅在等宽线未命中时画：等宽命中时它与等宽线描述同一语义（宽度一致→右缘对齐），
+            // 两线位置只差几像素并排会出现重影（用户看到"两条虚线"）。
+            if (!equalWidthActive && Math.Abs(currentRight - rightB) <= snapThreshold)
             {
                 AddVerticalGuide(verticalGuideXs, ref verticalGuideYMin, ref verticalGuideYMax, rightB, currentTop, topB, currentBottom, bottomB);
                 edgeSnapCandidates.Add((rightB, Math.Abs(currentRight - rightB)));
