@@ -7,6 +7,33 @@ namespace WitchDrawer.App.Tests;
 public sealed class DesktopBoxManagerPositionTests
 {
     [Fact]
+    public void ComputeEdgeSnapLogicalWidth_MovesRightEdgeToTargetX()
+    {
+        // 左缘 100、右缘 300、逻辑宽 290（chrome 10）、目标 x=350：
+        // 右缘需向右移 50 → 目标逻辑宽 = 350-300+290 = 340，物理宽 = 340+10 = 350 = 目标。
+        var target = DesktopBoxManager.ComputeEdgeSnapLogicalWidth(
+            currentLeft: 100,
+            currentRight: 300,
+            currentLogical: 290,
+            targetX: 350);
+
+        Assert.Equal(340, target, precision: 6);
+    }
+
+    [Fact]
+    public void ComputeEdgeSnapLogicalWidth_ZeroChrome_ShiftsByDelta()
+    {
+        // 无 chrome（物理宽 = 逻辑宽）：目标逻辑宽 = 当前逻辑宽 + (目标x − 当前右缘)。
+        var target = DesktopBoxManager.ComputeEdgeSnapLogicalWidth(
+            currentLeft: 100,
+            currentRight: 300,
+            currentLogical: 200,
+            targetX: 350);
+
+        Assert.Equal(250, target, precision: 6);
+    }
+
+    [Fact]
     public void ComputeSnappedLogicalWidth_CompensatesChromeDifference_SoPhysicalWidthsAlign()
     {
         // A：逻辑 300、物理 306（窗口边距 chrome 6）；B：逻辑 300、物理 310（chrome 10）。

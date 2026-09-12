@@ -1902,6 +1902,8 @@ public sealed class DesktopBoxManager
         // 候选按物理宽度配对逻辑宽度：吸附判定在物理坐标系（与虚线一致），
         // 命中后用 chrome 补偿换算回本盒的目标逻辑宽度。
         var candidatePairs = new List<(double Physical, double Logical)>();
+        // 右缘对齐吸附候选（与"右缘对齐虚线"一一对应）：把右缘移到目标 x。
+        var edgeSnapCandidates = new List<(double TargetX, double Distance)>();
 
         var verticalGuideXs = new List<double>();
         double verticalGuideYMin = double.MaxValue;
@@ -1950,39 +1952,72 @@ public sealed class DesktopBoxManager
             if (Math.Abs(currentRight - rightB) <= snapThreshold)
             {
                 AddVerticalGuide(verticalGuideXs, ref verticalGuideYMin, ref verticalGuideYMax, rightB, currentTop, topB, currentBottom, bottomB);
+                edgeSnapCandidates.Add((rightB, Math.Abs(currentRight - rightB)));
             }
 
             // Align right edge with another box's left edge.
             if (Math.Abs(currentRight - leftB) <= snapThreshold)
             {
                 AddVerticalGuide(verticalGuideXs, ref verticalGuideYMin, ref verticalGuideYMax, leftB, currentTop, topB, currentBottom, bottomB);
+                edgeSnapCandidates.Add((leftB, Math.Abs(currentRight - leftB)));
             }
         }
 
-        if (applySnap && currentWidth.HasValue && candidatePairs.Count > 0)
+        if (applySnap && currentWidth.HasValue)
         {
-            var snappedPhysical = FindWidthSnapTarget(
-                currentPhysicalWidth,
-                candidatePairs.Select(pair => pair.Physical),
-                snapThreshold);
-            if (snappedPhysical.HasValue)
+            double? targetLogical = null;
+            var bestDistance = double.MaxValue;
+
+            // 1) 等宽吸附：物理宽度接近对方（含 chrome 补偿）。
+            if (candidatePairs.Count > 0)
             {
-                var match = candidatePairs.First(pair =>
-                    Math.Abs(pair.Physical - snappedPhysical.Value) < 0.001);
-                // 补偿窗口边距差：物理宽精确等于对方，视觉边缘重合。
-                var targetLogical = ComputeSnappedLogicalWidth(
-                    currentWidth.Value,
+                var snappedPhysical = FindWidthSnapTarget(
                     currentPhysicalWidth,
-                    match.Logical,
-                    match.Physical);
+                    candidatePairs.Select(pair => pair.Physical),
+                    snapThreshold);
+                if (snappedPhysical.HasValue)
+                {
+                    var match = candidatePairs.First(pair =>
+                        Math.Abs(pair.Physical - snappedPhysical.Value) < 0.001);
+                    var candidateLogical = ComputeSnappedLogicalWidth(
+                        currentWidth.Value,
+                        currentPhysicalWidth,
+                        match.Logical,
+                        match.Physical);
+                    var distance = Math.Abs(currentPhysicalWidth - snappedPhysical.Value);
+                    if (distance < bestDistance)
+                    {
+                        targetLogical = candidateLogical;
+                        bestDistance = distance;
+                    }
+                }
+            }
+
+            // 2) 右缘对齐吸附：与"右缘对齐虚线"对应——右缘移到目标 x（吸到虚线上）。
+            if (edgeSnapCandidates.Count > 0)
+            {
+                var (targetX, distance) = edgeSnapCandidates.MinBy(candidate => candidate.Distance);
+                if (distance < bestDistance)
+                {
+                    targetLogical = ComputeEdgeSnapLogicalWidth(
+                        currentLeft,
+                        currentRight,
+                        currentWidth.Value,
+                        targetX);
+                    bestDistance = distance;
+                }
+            }
+
+            if (targetLogical.HasValue)
+            {
                 if (resizedWindow.ViewModel.IsMappingListMode)
                 {
-                    resizedWindow.ViewModel.ResizeMappingListWidth(targetLogical);
+                    resizedWindow.ViewModel.ResizeMappingListWidth(targetLogical.Value);
                 }
                 else
                 {
                     resizedWindow.ViewModel.ResizeDrawerCover(
-                        targetLogical,
+                        targetLogical.Value,
                         resizedWindow.ViewModel.DrawerCoverHeight);
                 }
             }
@@ -1996,6 +2031,24 @@ public sealed class DesktopBoxManager
         {
             HideVerticalGuide();
         }
+    }
+
+    /// <summary>
+    /// 计算把本盒右缘移到 <paramref name="targetX"/>（虚线位置）时所需的目标逻辑宽度。
+    /// 化简后 = 当前逻辑宽 + (目标x − 当前右缘)，chrome 自然抵消。
+    /// 用于"右缘对齐对方右缘/左缘"的吸附——与等宽吸附对应不同的虚线。
+    /// </summary>
+    internal static double ComputeEdgeSnapLogicalWidth(
+        double currentLeft,
+        double currentRight,
+        double currentLogical,
+        double targetX)
+    {
+        // chrome = (currentRight - currentLeft) - currentLogical；
+        // 目标物理宽 = targetX - currentLeft；目标逻辑 = 目标物理宽 - chrome
+        // = targetX - currentLeft - (currentRight - currentLeft) + currentLogical
+        // = targetX - currentRight + currentLogical。
+        return targetX - currentRight + currentLogical;
     }
 
     /// <summary>
