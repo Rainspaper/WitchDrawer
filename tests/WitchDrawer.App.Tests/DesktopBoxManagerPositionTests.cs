@@ -7,6 +7,33 @@ namespace WitchDrawer.App.Tests;
 public sealed class DesktopBoxManagerPositionTests
 {
     [Fact]
+    public void ComputeSnappedLogicalWidth_CompensatesChromeDifference_SoPhysicalWidthsAlign()
+    {
+        // A：逻辑 300、物理 306（窗口边距 chrome 6）；B：逻辑 300、物理 310（chrome 10）。
+        // 吸附后 A 的目标逻辑宽应补偿 4px chrome 差 → 304，使物理宽 = 304+6 = 310 = B。
+        var target = DesktopBoxManager.ComputeSnappedLogicalWidth(
+            currentLogical: 300,
+            currentPhysical: 306,
+            otherLogical: 300,
+            otherPhysical: 310);
+
+        Assert.Equal(304, target, precision: 6);
+    }
+
+    [Fact]
+    public void ComputeSnappedLogicalWidth_KeepsWidth_WhenChromeIsIdentical()
+    {
+        // 同预设（chrome 相同）：目标逻辑宽 = 对方逻辑宽，不补偿。
+        var target = DesktopBoxManager.ComputeSnappedLogicalWidth(
+            currentLogical: 295,
+            currentPhysical: 301,
+            otherLogical: 300,
+            otherPhysical: 306);
+
+        Assert.Equal(300, target, precision: 6);
+    }
+
+    [Fact]
     public void FindWidthSnapTarget_SnapsToNearestCandidateWithinThreshold()
     {
         // 当前宽度 300，候选 285/295/310：最近的是 295（差 5 ≤ 阈值 10）。

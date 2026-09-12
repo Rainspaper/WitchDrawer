@@ -1884,7 +1884,6 @@ public sealed class DesktopBoxManager
     {
         var dpi = resizedWindow.GetDpiScale();
         var snapThreshold = 10.0 * dpi.DpiScaleX;
-        var widthSnapThreshold = 10.0;
 
         var boundsA = resizedWindow.GetVisibleBoundsPixels();
         if (boundsA.IsEmpty)
@@ -1899,7 +1898,10 @@ public sealed class DesktopBoxManager
         double currentRight = boundsA.Right;
 
         var currentWidth = GetBoxWidth(resizedWindow);
-        var candidateWidths = new List<double>();
+        var currentPhysicalWidth = boundsA.Width;
+        // 候选按物理宽度配对逻辑宽度：吸附判定在物理坐标系（与虚线一致），
+        // 命中后用 chrome 补偿换算回本盒的目标逻辑宽度。
+        var candidatePairs = new List<(double Physical, double Logical)>();
 
         var verticalGuideXs = new List<double>();
         double verticalGuideYMin = double.MaxValue;
@@ -1920,7 +1922,7 @@ public sealed class DesktopBoxManager
                 var otherWidth = GetBoxWidth(otherWindow);
                 if (otherWidth.HasValue)
                 {
-                    candidateWidths.Add(otherWidth.Value);
+                    candidatePairs.Add((otherWindow.GetVisibleBoundsPixels().Width, otherWidth.Value));
                 }
             }
 
@@ -1957,22 +1959,30 @@ public sealed class DesktopBoxManager
             }
         }
 
-        if (applySnap && currentWidth.HasValue)
+        if (applySnap && currentWidth.HasValue && candidatePairs.Count > 0)
         {
-            var snappedWidth = FindWidthSnapTarget(
-                currentWidth.Value,
-                candidateWidths,
-                widthSnapThreshold);
-            if (snappedWidth.HasValue)
+            var snappedPhysical = FindWidthSnapTarget(
+                currentPhysicalWidth,
+                candidatePairs.Select(pair => pair.Physical),
+                snapThreshold);
+            if (snappedPhysical.HasValue)
             {
+                var match = candidatePairs.First(pair =>
+                    Math.Abs(pair.Physical - snappedPhysical.Value) < 0.001);
+                // 补偿窗口边距差：物理宽精确等于对方，视觉边缘重合。
+                var targetLogical = ComputeSnappedLogicalWidth(
+                    currentWidth.Value,
+                    currentPhysicalWidth,
+                    match.Logical,
+                    match.Physical);
                 if (resizedWindow.ViewModel.IsMappingListMode)
                 {
-                    resizedWindow.ViewModel.ResizeMappingListWidth(snappedWidth.Value);
+                    resizedWindow.ViewModel.ResizeMappingListWidth(targetLogical);
                 }
                 else
                 {
                     resizedWindow.ViewModel.ResizeDrawerCover(
-                        snappedWidth.Value,
+                        targetLogical,
                         resizedWindow.ViewModel.DrawerCoverHeight);
                 }
             }
@@ -1986,6 +1996,23 @@ public sealed class DesktopBoxManager
         {
             HideVerticalGuide();
         }
+    }
+
+    /// <summary>
+    /// 计算吸附到对方宽度时本盒应设的目标逻辑宽度，使两盒**物理宽度**精确相等。
+    /// 物理宽 = 逻辑宽 + 窗口边距（chrome）；不同预设 scale 的盒子 chrome 不同，
+    /// 只把逻辑宽设成相同值会留下几像素的物理差，视觉上"感觉没对齐"。
+    /// 补偿 = 对方逻辑宽 + 对方 chrome − 本盒 chrome。
+    /// </summary>
+    internal static double ComputeSnappedLogicalWidth(
+        double currentLogical,
+        double currentPhysical,
+        double otherLogical,
+        double otherPhysical)
+    {
+        var currentChrome = currentPhysical - currentLogical;
+        var otherChrome = otherPhysical - otherLogical;
+        return otherLogical + otherChrome - currentChrome;
     }
 
     /// <summary>
