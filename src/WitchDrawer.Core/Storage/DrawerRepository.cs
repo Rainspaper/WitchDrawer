@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Data.Sqlite;
 using WitchDrawer.Core.Models;
 
@@ -7,9 +8,27 @@ public sealed class DrawerRepository
 {
     private readonly string _databasePath;
 
+    /// <summary>
+    /// AppSettings 全量内存快照。该表是百行量级的小表：启动期每个收纳盒要先读十余个
+    /// 设置项，逐条查询意味着上百次「新建连接 + 查询 + 线程切换」。整体读入后，
+    /// 读取路径零 I/O；写入走写穿（先落库成功，再更新快照）。
+    /// </summary>
+    private readonly ConcurrentDictionary<string, string> _settingsCache = new(StringComparer.Ordinal);
+
+    private volatile bool _settingsCacheReady;
+
     public DrawerRepository(string databasePath)
     {
         _databasePath = databasePath;
+    }
+
+    /// <summary>
+    /// 丢弃设置快照（数据目录迁移等替换数据库文件的场景）。
+    /// </summary>
+    public void InvalidateSettingsSnapshot()
+    {
+        _settingsCache.Clear();
+        _settingsCacheReady = false;
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -95,11 +114,34 @@ public sealed class DrawerRepository
                 connection,
                 "CREATE INDEX IF NOT EXISTS IX_Todos_BoxArchiveStateSort ON Todos(BoxId, IsArchived, IsCompleted, SortOrder);",
                 cancellationToken);
+
+            await LoadSettingsSnapshotAsync(connection, cancellationToken);
         }
         catch (Exception exception) when (IsDatabaseAccessFailure(exception))
         {
             throw CreateDatabaseAccessException(databaseDirectory, exception);
         }
+    }
+
+    /// <summary>
+    /// 把 AppSettings 全表读入内存快照。读取中途失败时快照不会被标记为就绪，
+    /// 后续读取自动退回逐条查询路径。
+    /// </summary>
+    private async Task LoadSettingsSnapshotAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        var command = connection.CreateCommand();
+        command.CommandText = "SELECT Key, Value FROM AppSettings;";
+
+        _settingsCache.Clear();
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                _settingsCache[reader.GetString(0)] = reader.GetString(1);
+            }
+        }
+
+        _settingsCacheReady = true;
     }
 
     /// <summary>
@@ -777,6 +819,12 @@ public sealed class DrawerRepository
 
     public async Task<string?> GetSettingAsync(string key, CancellationToken cancellationToken = default)
     {
+        // 快照就绪时连"键不存在"也无需查库：全表已在内存里。
+        if (_settingsCacheReady)
+        {
+            return _settingsCache.TryGetValue(key, out var cached) ? cached : null;
+        }
+
         await using var connection = CreateConnection();
         await connection.OpenAsync(cancellationToken);
 
@@ -804,6 +852,12 @@ public sealed class DrawerRepository
         command.Parameters.AddWithValue("$value", value);
 
         await command.ExecuteNonQueryAsync(cancellationToken);
+
+        // 写穿：只有落库成功才更新快照，避免缓存出现磁盘上没有的值。
+        if (_settingsCacheReady)
+        {
+            _settingsCache[key] = value;
+        }
     }
 
     public async Task<bool> DeleteSettingAsync(string key, CancellationToken cancellationToken = default)
@@ -814,7 +868,13 @@ public sealed class DrawerRepository
         var command = connection.CreateCommand();
         command.CommandText = "DELETE FROM AppSettings WHERE Key = $key;";
         command.Parameters.AddWithValue("$key", key);
-        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+        var deleted = await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+        if (deleted)
+        {
+            _settingsCache.TryRemove(key, out _);
+        }
+
+        return deleted;
     }
 
     public async Task<int> GetNextBoxSortOrderAsync(CancellationToken cancellationToken = default)

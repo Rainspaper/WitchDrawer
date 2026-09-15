@@ -24,7 +24,8 @@ public partial class MainWindow : Window
     private const int QuickPanelHotKeyId = 0x5744;
     internal const string SupportPageUri = "https://www.witchcat.cn/zh/support";
 
-    private readonly QuickPanelWindow _quickPanel;
+    private readonly Lazy<QuickPanelWindow> _quickPanel;
+    private bool _windowClosed;
     private readonly IAppLogger _logger;
     private readonly QuickPanelHotKeySettingsStore _hotKeySettings;
     private QuickPanelHotKey _quickPanelHotKey;
@@ -66,13 +67,15 @@ public partial class MainWindow : Window
 
     internal MainWindow(
         MainViewModel viewModel,
-        QuickPanelWindow quickPanel,
+        Func<QuickPanelWindow> quickPanelFactory,
         IAppLogger logger,
         QuickPanelHotKeySettingsStore hotKeySettings,
         QuickPanelHotKey quickPanelHotKey)
     {
         DataContext = viewModel;
-        _quickPanel = quickPanel;
+        // 快捷面板窗口按需构造：它只在用户按下热键时才需要显示，
+        // 而构造它要付一次性的 XAML 首次解析成本，不该由启动路径承担。
+        _quickPanel = new Lazy<QuickPanelWindow>(quickPanelFactory);
         _logger = logger;
         _hotKeySettings = hotKeySettings;
         _quickPanelHotKey = quickPanelHotKey;
@@ -164,9 +167,30 @@ public partial class MainWindow : Window
         ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
         _source?.RemoveHook(WndProc);
         _hotKey?.Dispose();
-        _quickPanel.ForceClose();
+        _windowClosed = true;
+        if (_quickPanel.IsValueCreated)
+        {
+            _quickPanel.Value.ForceClose();
+        }
+
         WindowClosing?.Invoke(this, EventArgs.Empty);
         base.OnClosed(e);
+    }
+
+    /// <summary>
+    /// 启动路径结束后预热快捷面板窗口：把 XAML 首次解析成本挪到 UI 空闲时段，
+    /// 既不阻塞启动，也不让用户首次唤出快捷面板时等这一下。
+    /// </summary>
+    internal void PrewarmQuickPanel()
+    {
+        if (_windowClosed || _quickPanel.IsValueCreated)
+        {
+            return;
+        }
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        _ = _quickPanel.Value;
+        _logger.Info($"[perf] quick panel prewarmed in {watch.ElapsedMilliseconds} ms.");
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -568,7 +592,7 @@ public partial class MainWindow : Window
         if (message == WmHotKey && wParam.ToInt32() == QuickPanelHotKeyId)
         {
             handled = true;
-            _ = Dispatcher.InvokeAsync(async () => await _quickPanel.ToggleAsync());
+            _ = Dispatcher.InvokeAsync(async () => await _quickPanel.Value.ToggleAsync());
         }
 
         return nint.Zero;

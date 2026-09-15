@@ -35,6 +35,10 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // 启动阶段计时探针：用 [perf] 前缀的结构化日志记录各阶段耗时，
+        // 便于对比优化前后的启动延迟（见 tools/perf 测量脚本）。
+        var startupWatch = System.Diagnostics.Stopwatch.StartNew();
+
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
         if (ProcessElevation.RequiresUnelevatedRelaunch())
@@ -114,12 +118,15 @@ public partial class App : Application
             var dataStorageMigrationService =
                 new DataStorageMigrationService(paths, repository, storageLocationStore);
 
+            logger.Info($"[perf] services constructed at {startupWatch.ElapsedMilliseconds} ms, ws {Environment.WorkingSet / (1024 * 1024)} MB.");
             logger.Info("Data directory: " + paths.RootDirectory);
             logger.Info("Database path: " + paths.DatabasePath);
 
+            var dataInitWatch = System.Diagnostics.Stopwatch.StartNew();
             var quickPanelHotKey = await InitializeDataAndLoadQuickPanelHotKeyAsync(
                 drawerService,
                 quickPanelHotKeySettings);
+            logger.Info($"[perf] database initialized in {dataInitWatch.ElapsedMilliseconds} ms.");
             AppThemeManager.Apply(await LoadSavedThemeAsync(drawerService));
 
             var quickPanelViewModel = new QuickPanelViewModel(
@@ -127,7 +134,10 @@ public partial class App : Application
                 launcher,
                 logger,
                 boxVisualStyleStore);
-            var quickPanel = new QuickPanelWindow(quickPanelViewModel);
+            // 快捷面板窗口不参与启动路径：它只在用户按下热键时才需要显示，而首次构造
+            // 一个 AllowsTransparency 窗口要付整套 XAML 首次解析成本（实测 280-420 ms）。
+            // 改为启动路径跑完后在 UI 空闲时预热，既不拖慢启动，也不让首次唤出变慢。
+            QuickPanelWindow CreateQuickPanel() => new(quickPanelViewModel);
             var mainViewModel = new MainViewModel(
                 drawerService,
                 todoService,
@@ -148,15 +158,18 @@ public partial class App : Application
                 boxPositionLockStateStore,
                 boxTabGroupService,
                 () => mainViewModel.IsDesktopDoubleClickEnabled);
+            var mainWindowWatch = System.Diagnostics.Stopwatch.StartNew();
             _mainWindow = new MainWindow(
                 mainViewModel,
-                quickPanel,
+                CreateQuickPanel,
                 logger,
                 quickPanelHotKeySettings,
                 quickPanelHotKey);
+            logger.Info($"[perf] main window constructed in {mainWindowWatch.ElapsedMilliseconds} ms.");
             _desktopBoxManager.ShowDesktopActivated += (_, _) =>
                 _mainWindow.SendBehindDesktop();
             StartSingleInstanceServer(logger);
+            logger.Info($"[perf] view models and windows constructed at {startupWatch.ElapsedMilliseconds} ms, ws {Environment.WorkingSet / (1024 * 1024)} MB.");
 
             // 这些事件处理器是 async void：刷新期间的异常（如 SQLite 写入失败）会直接逃出
             // 成为进程级未处理异常，必须就地捕获记录。
@@ -276,8 +289,10 @@ public partial class App : Application
             MainWindow = _mainWindow;
             // 1. 先创建桌面盒（无入场动画），让用户最快看到抽屉
             await _desktopBoxManager.RefreshAsync(animateNewWindows: false);
+            logger.Info($"[perf] desktop boxes visible at {startupWatch.ElapsedMilliseconds} ms, ws {Environment.WorkingSet / (1024 * 1024)} MB, managed {GC.GetTotalMemory(false) / (1024 * 1024)} MB.");
             // 2. 再加载主窗口数据（会触发 BoxesChanged，但桌面盒已存在，只做增量更新）
             await mainViewModel.LoadAsync();
+            logger.Info($"[perf] main view model loaded at {startupWatch.ElapsedMilliseconds} ms, ws {Environment.WorkingSet / (1024 * 1024)} MB.");
             // 3. 最后显示主窗口（非静默），避免主窗口渲染与桌面盒创建同时抢占 GPU/CPU
             if (silentStart)
             {
@@ -286,10 +301,27 @@ public partial class App : Application
             else
             {
                 _mainWindow.Show();
+                logger.Info($"[perf] main window shown at {startupWatch.ElapsedMilliseconds} ms, ws {Environment.WorkingSet / (1024 * 1024)} MB.");
             }
             // QuickPanel 只在用户真正打开时才加载（ToggleAsync 内部会 LoadAsync），
             // 启动时不再预加载，减少启动期的 I/O 与 CPU 竞争。
             await updateService.ConfirmUpdateStartupAsync();
+            logger.Info($"[perf] startup complete at {startupWatch.ElapsedMilliseconds} ms, ws {Environment.WorkingSet / (1024 * 1024)} MB, managed {GC.GetTotalMemory(false) / (1024 * 1024)} MB.");
+
+            // 启动路径已跑完：在 UI 空闲时预热快捷面板窗口，避开首屏渲染与启动 I/O 的争抢。
+            _ = Dispatcher.InvokeAsync(
+                () =>
+                {
+                    try
+                    {
+                        _mainWindow?.PrewarmQuickPanel();
+                    }
+                    catch (Exception exception)
+                    {
+                        logger.Error(exception, "Failed to prewarm the quick panel window.");
+                    }
+                },
+                System.Windows.Threading.DispatcherPriority.Background);
         }
         catch (Exception exception)
         {
@@ -499,6 +531,8 @@ public partial class App : Application
 
     private async Task PerformShutdownAsync()
     {
+        var shutdownWatch = System.Diagnostics.Stopwatch.StartNew();
+        _logger?.Info("[perf] shutdown requested.");
         if (Interlocked.Exchange(ref _shutdownStarted, 1) != 0)
         {
             return;
@@ -516,6 +550,7 @@ public partial class App : Application
                 // Keep the dispatcher free while positions are saved and desktop windows close.
                 // A synchronous wait here deadlocks because CloseAllAsync resumes on the UI thread.
                 await desktopBoxManager.CloseAllAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                _logger?.Info($"[perf] desktop boxes closed at {shutdownWatch.ElapsedMilliseconds} ms.");
             }
             catch (TimeoutException exception)
             {
@@ -532,8 +567,10 @@ public partial class App : Application
         {
             _mainWindow.ForceClose();
             _mainWindow = null;
+            _logger?.Info($"[perf] main window closed at {shutdownWatch.ElapsedMilliseconds} ms.");
         }
 
+        _logger?.Info($"[perf] shutdown dispatching at {shutdownWatch.ElapsedMilliseconds} ms.");
         Shutdown(0);
     }
 
@@ -575,6 +612,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _logger?.Info("[perf] OnExit reached.");
         _singleInstancePipeCts?.Cancel();
         _singleInstancePipeCts?.Dispose();
         _taskbarIcon?.Dispose();
