@@ -29,6 +29,7 @@ public partial class App : Application
     private MainWindow? _mainWindow;
     private DesktopBoxManager? _desktopBoxManager;
     private IAppLogger? _logger;
+    private WorkingSetTrimmer? _workingSetTrimmer;
     private int _shutdownStarted;
 
     protected override async void OnStartup(StartupEventArgs e)
@@ -307,6 +308,11 @@ public partial class App : Application
             // 启动时不再预加载，减少启动期的 I/O 与 CPU 竞争。
             await updateService.ConfirmUpdateStartupAsync();
             logger.Info($"[perf] startup complete at {startupWatch.ElapsedMilliseconds} ms, ws {Environment.WorkingSet / (1024 * 1024)} MB, managed {GC.GetTotalMemory(false) / (1024 * 1024)} MB.");
+
+            // 启动路径结束后才开始空闲计时：首屏渲染期间 WPF 与显卡驱动按需载入了大量
+            // 代码页，此后若用户不用这个应用，它们就没有继续驻留的必要（见 WorkingSetTrimmer）。
+            _workingSetTrimmer = new WorkingSetTrimmer(logger);
+            _workingSetTrimmer.Start();
 
             // 启动路径已跑完：在 UI 空闲时预热快捷面板窗口，避开首屏渲染与启动 I/O 的争抢。
             _ = Dispatcher.InvokeAsync(
@@ -615,6 +621,7 @@ public partial class App : Application
         _logger?.Info("[perf] OnExit reached.");
         _singleInstancePipeCts?.Cancel();
         _singleInstancePipeCts?.Dispose();
+        _workingSetTrimmer?.Dispose();
         _taskbarIcon?.Dispose();
         _singleInstanceMutex?.Dispose();
         base.OnExit(e);
