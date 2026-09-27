@@ -158,7 +158,12 @@ public partial class App : Application
                 boxVisualStyleStore,
                 boxPositionLockStateStore,
                 boxTabGroupService,
-                () => mainViewModel.IsDesktopDoubleClickEnabled);
+                // 开机自启（--silent）时不启用“双击桌面切换图标”的自动触发：
+                // 自启后程序后台挂着全局鼠标钩子，用户在桌面上双击（哪怕只是双击
+                // 图标想打开程序）会被判定为“桌面空白双击”而切走全部图标（尤其多
+                // 显示器下 ListView 不可见时误判为空白）。保持设置页里手动的
+                // “隐藏桌面图标”开关不受影响；双击切换仅在可交互会话里生效。
+                () => mainViewModel.IsDesktopDoubleClickEnabled && !silentStart);
             var mainWindowWatch = System.Diagnostics.Stopwatch.StartNew();
             _mainWindow = new MainWindow(
                 mainViewModel,
