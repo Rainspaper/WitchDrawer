@@ -103,6 +103,21 @@ public partial class App : Application
                 logger.Error(exception, "Failed to update a legacy startup shortcut.");
             }
 
+            var runKeyMigration = await Task.Run(() =>
+                StartupRunKeyMigration.EnsureSilentArguments(
+                    Environment.ProcessPath,
+                    StartupLaunchPolicy.SilentArgument));
+            if (runKeyMigration.UpdatedCount > 0)
+            {
+                logger.Info(
+                    $"Added silent startup argument to the {runKeyMigration.UpdatedCount} legacy Run registry value(s).");
+            }
+
+            foreach (var exception in runKeyMigration.Errors)
+            {
+                logger.Error(exception, "Failed to update the legacy startup Run registry value.");
+            }
+
             var repository = new DrawerRepository(paths.DatabasePath);
             var drawerService = new DrawerService(paths, repository);
             var launcher = new ShellFileLauncher();
