@@ -143,15 +143,33 @@ public static class DesktopIconVisibility
         }
 
         var desktopListView = FindDesktopListView();
-        if (desktopListView != nint.Zero
-            && IsWindowVisible(desktopListView)
-            && clickedWindow == desktopListView)
+        if (ShouldHitTestDesktopListView(
+                desktopListView != nint.Zero,
+                clickedWindow == desktopListView,
+                IsDesktopHostWindow(clickedWindow)))
         {
             return IsBlankListViewPoint(desktopListView, screenX, screenY);
         }
 
-        return IsDesktopHostWindow(clickedWindow);
+        return desktopListView == nint.Zero && IsDesktopHostWindow(clickedWindow);
     }
+
+    /// <summary>
+    /// 是否用桌面 ListView 的命中测试来区分「桌面图标」与「桌面空白」。
+    /// 关键：不能把 ListView 的可见性当作前提。桌面图标被隐藏（HideIcons=1）时
+    /// ListView 不可见，WindowFromPoint 只会带回 Progman/WorkerW 这类桌面宿主；
+    /// 若此时退化成「命中桌面宿主即算空白」，那么双击桌面上的图标同样会被判成
+    /// 「双击空白」——这正是双击切换误触发的来源，也是它曾被按启动方式一刀切
+    /// 禁用的原因。LVM_HITTEST 在 ListView 隐藏时依然返回正确的条目索引
+    /// （2026-10-07 实机验证：图标可见与隐藏两种状态下，图标位置 iItem=0、
+    /// 空白位置 iItem=-1，itemCount 均为 28）。
+    /// </summary>
+    internal static bool ShouldHitTestDesktopListView(
+        bool hasDesktopListView,
+        bool clickedIsDesktopListView,
+        bool clickedIsDesktopHost) =>
+        hasDesktopListView
+        && (clickedIsDesktopListView || clickedIsDesktopHost);
 
     internal static bool IsHiddenRegistryValue(object? value) => value switch
     {
@@ -298,10 +316,6 @@ public static class DesktopIconVisibility
 
     [DllImport("user32.dll")]
     private static extern nint WindowFromPoint(NativePoint point);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool IsWindowVisible(nint window);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

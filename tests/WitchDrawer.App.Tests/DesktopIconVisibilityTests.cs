@@ -112,4 +112,33 @@ public sealed class DesktopIconVisibilityTests
     {
         Assert.Equal(expected, DesktopIconVisibility.IsDesktopHostClass(className));
     }
+
+    [Theory]
+    // 图标被隐藏（HideIcons=1）时 ListView 不可见，WindowFromPoint 只会带回
+    // Progman/WorkerW 这类桌面宿主。此时仍必须走 ListView 命中测试——退化成
+    // 「命中桌面宿主即空白」就会把「双击桌面图标」判成「双击桌面空白」，
+    // 从而把全部图标切走。
+    [InlineData(true, false, true, true)]
+    // 命中 ListView 本身同样走精确判定。
+    [InlineData(true, true, false, true)]
+    [InlineData(true, true, true, true)]
+    // 命中的既不是桌面视图也不是桌面宿主（例如叠在桌面上的普通窗口）：不触发。
+    [InlineData(true, false, false, false)]
+    // 找不到桌面 ListView：无法精确判定，交给调用方的兜底分支。
+    [InlineData(false, false, true, false)]
+    [InlineData(false, true, true, false)]
+    [InlineData(false, false, false, false)]
+    public void ShouldHitTestDesktopListView_KeepsPreciseHitTestWhenListViewIsInvisible(
+        bool hasDesktopListView,
+        bool clickedIsDesktopListView,
+        bool clickedIsDesktopHost,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            DesktopIconVisibility.ShouldHitTestDesktopListView(
+                hasDesktopListView,
+                clickedIsDesktopListView,
+                clickedIsDesktopHost));
+    }
 }

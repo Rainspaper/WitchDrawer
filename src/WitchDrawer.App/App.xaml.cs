@@ -175,12 +175,15 @@ public partial class App : Application
                 boxVisualStyleStore,
                 boxPositionLockStateStore,
                 boxTabGroupService,
-                // 开机自启（--silent）时不启用“双击桌面切换图标”的自动触发：
-                // 自启后程序后台挂着全局鼠标钩子，用户在桌面上双击（哪怕只是双击
-                // 图标想打开程序）会被判定为“桌面空白双击”而切走全部图标（尤其多
-                // 显示器下 ListView 不可见时误判为空白）。保持设置页里手动的
-                // “隐藏桌面图标”开关不受影响；双击切换仅在可交互会话里生效。
-                () => mainViewModel.IsDesktopDoubleClickEnabled && !silentStart);
+                // 双击切换只由设置项决定。这里曾经额外要求 !silentStart，用来避免
+                // 自启实例在后台把「双击桌面图标」误判成「双击桌面空白」而切走全部
+                // 图标；但程序是单实例：自启实例先跑起来后，用户之后双击快捷方式只
+                // 会激活它（见上面的单实例分支），被禁掉的正是用户实际在交互的那个
+                // 实例——设置页显示“已开启”，双击却永远没反应。
+                // 误触发的根因已由 DesktopIconVisibility.IsBlankDesktopPoint 的
+                // LVM_HITTEST 精确判定解决（图标隐藏时 ListView 不可见，不再退化为
+                // 「命中桌面宿主即空白」），因此不再按启动方式禁用。
+                () => mainViewModel.IsDesktopDoubleClickEnabled);
             var mainWindowWatch = System.Diagnostics.Stopwatch.StartNew();
             _mainWindow = new MainWindow(
                 mainViewModel,
