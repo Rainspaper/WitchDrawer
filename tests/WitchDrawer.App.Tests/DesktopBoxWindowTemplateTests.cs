@@ -225,7 +225,7 @@ public sealed class DesktopBoxWindowTemplateTests
             "{Binding DataContext.IsFileNameVisible, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BooleanToVisibilityConverter}}",
             (string?)expandFileName.Attribute("Visibility"));
         Assert.Equal(
-            "{Binding DataContext.LayoutSettings.ItemSlotHeight, RelativeSource={RelativeSource AncestorType={x:Type ListBox}}}",
+            "{Binding LayoutSettings.ItemSlotHeight, Source={StaticResource BoxLayoutProxy}}",
             (string?)secondaryPanel.Attribute("CellHeight"));
     }
 
