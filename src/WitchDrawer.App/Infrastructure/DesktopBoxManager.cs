@@ -57,6 +57,7 @@ public sealed class DesktopBoxManager
     private GuideLineWindow? _horizontalGuide;
     private bool _isAdjustingPosition;
     private DesktopBoxWindow? _mergePreviewHost;
+    private readonly DesktopToggleVisibilityState _desktopToggleVisibility = new();
 
     public DesktopBoxManager(
         DrawerService drawerService,
@@ -270,6 +271,12 @@ public sealed class DesktopBoxManager
                     // 窗口首次可见时就已经在桌面层，不会先浮在最上层闪一帧再被压回。
                     new System.Windows.Interop.WindowInteropHelper(window).EnsureHandle();
                     window.Show();
+                    if (_desktopToggleVisibility.TrackIfHidden(box.Id))
+                    {
+                        // 整体隐藏期间刷新重建出来的窗口也要跟着藏起来。
+                        window.Hide();
+                    }
+
                     window.SetPositionLocked(isPositionLocked);
                     window.SetDesktopForeground(_desktopIsForeground);
                     window.QueueSendToBottom();
@@ -592,6 +599,8 @@ public sealed class DesktopBoxManager
                 window.Show();
             }
 
+            // 用户显式显示这个盒子：它不再算被「双击桌面」整体隐藏。
+            _desktopToggleVisibility.Forget(boxId);
             window.QueueSendToBottom();
             return true;
         }
@@ -617,6 +626,8 @@ public sealed class DesktopBoxManager
                 return;
             }
 
+            // 用户显式要求显示全部：整体隐藏状态就此结束。
+            _desktopToggleVisibility.EndHide();
             var hiddenWindows = SnapshotHiddenWindows(
                 _windows.Values,
                 static window => window.IsVisible);
@@ -630,6 +641,60 @@ public sealed class DesktopBoxManager
 
                 window.Show();
                 window.QueueSendToBottom();
+            }
+        }
+        finally
+        {
+            _refreshGate.Release();
+        }
+    }
+
+    /// <summary>「双击桌面空白」是否把收纳盒整体隐藏了。</summary>
+    public bool IsHiddenByDesktopToggle => _desktopToggleVisibility.IsHidden;
+
+    /// <summary>
+    /// 双击桌面空白时，把收纳盒与桌面图标一起隐藏/恢复。
+    /// 隐藏只作用于此刻可见的窗口；恢复只作用于当时被隐藏的那些，不会把用户
+    /// 自己用 X 关掉的盒子、或合并进宿主盒的成员盒一并拉起来。
+    /// </summary>
+    public async Task SetHiddenByDesktopToggleAsync(bool hidden)
+    {
+        if (_closing)
+        {
+            return;
+        }
+
+        await _refreshGate.WaitAsync();
+        try
+        {
+            if (_closing)
+            {
+                return;
+            }
+
+            if (hidden)
+            {
+                var visibleBoxIds = _windows
+                    .Where(pair => pair.Value.IsVisible)
+                    .Select(pair => pair.Key);
+                foreach (var boxId in _desktopToggleVisibility.BeginHide(visibleBoxIds))
+                {
+                    if (_windows.TryGetValue(boxId, out var window))
+                    {
+                        window.Hide();
+                    }
+                }
+
+                return;
+            }
+
+            foreach (var boxId in _desktopToggleVisibility.EndHide())
+            {
+                if (_windows.TryGetValue(boxId, out var window))
+                {
+                    window.Show();
+                    window.QueueSendToBottom();
+                }
             }
         }
         finally
@@ -766,6 +831,8 @@ public sealed class DesktopBoxManager
                 window.Show();
             }
 
+            // 用户把盒子召回屏幕中央：它不再算被「双击桌面」整体隐藏。
+            _desktopToggleVisibility.Forget(boxId);
             window.ResyncSizeToContent();
             window.UpdateLayout();
             var bounds = window.GetVisibleBoundsPixels();

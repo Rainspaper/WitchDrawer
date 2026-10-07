@@ -230,6 +230,10 @@ public partial class App : Application
                 }
 
                 mainViewModel.ToggleDesktopIconsCommand.Execute(null);
+
+                // 收纳盒跟随桌面图标一起隐藏/恢复：双击一次就能得到完全干净的桌面，
+                // 再双击一次两者一起回来。
+                await _desktopBoxManager.SetHiddenByDesktopToggleAsync(willHide);
             };
             _mainWindow.ReopenBoxRequested += async (_, boxId) => await _desktopBoxManager.ShowAsync(boxId);
             _mainWindow.RecordLayoutBackupRequested += async (_, slot) =>
