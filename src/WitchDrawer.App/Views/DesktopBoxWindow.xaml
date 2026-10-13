@@ -119,8 +119,10 @@
 
             <!-- 顶部标题栏与 macOS 关闭小红点 -->
             <!-- 左侧名称 / 视图切换 / 卷起 / 关闭。 -->
+            <!-- 折叠封面时标题栏最大宽度=封面宽度（HeaderMaxWidth）：标题栏的自然宽度不能成为窗口宽度下限，否则封面缩到 2 列图标后盒子仍被标题栏撑宽，图标左右留白、右下角尺寸手柄也会离开盒子角。 -->
             <Grid Grid.Row="0"
                   Background="Transparent"
+                  MaxWidth="{Binding HeaderMaxWidth}"
                   Visibility="{Binding IsHeaderVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />

@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -346,6 +346,19 @@ public partial class DesktopBoxWindow : Window
     {
         _desktopIsForeground = isForeground;
         SendToBottom();
+    }
+
+    /// <summary>
+    /// 全屏程序进入前台时收起可能压在它上面的瞬时窗口。
+    /// 抽屉弹窗打开前会断开属主并被显式置顶（HWND_TOPMOST），不会跟着盒子一起
+    /// 沉底或被隐藏，必须单独关掉。
+    /// </summary>
+    public void CloseTransientOverlaysForFullscreen()
+    {
+        if (DrawerSecondaryPopup.IsOpen)
+        {
+            DrawerSecondaryPopup.IsOpen = false;
+        }
     }
 
     public void SuspendDesktopOwnershipForShellPopup()
@@ -2320,9 +2333,23 @@ public partial class DesktopBoxWindow : Window
 
         if (ViewModel.IsDrawerCollapsed)
         {
-            // The collapsed drawer cover is not the item grid (the IconList is hidden and
-            // has zero size), so pointer coordinates cannot select a grid cell. Append
-            // after the last item, the same fallback the mapping list view uses.
+            // 折叠封面时图标列表（IconList）是隐藏的、没有尺寸，指针坐标选不了网格格位；
+            // 但封面自己的格子可以直接换算：同盒拖动按指针所在的封面格子插入，
+            // 跨盒落放仍追加到末尾（与列表视图一致的兜底）。
+            if (movingItemId is not null
+                && DrawerCoverItems.ActualWidth > 0
+                && DrawerCoverItems.ActualHeight > 0)
+            {
+                var coverPoint = e.GetPosition(DrawerCoverItems);
+                return (0, CalculateCoverCellIndex(
+                    coverPoint.X,
+                    coverPoint.Y,
+                    DrawerCoverItems.ActualWidth,
+                    DrawerCoverItems.ActualHeight,
+                    ViewModel.DrawerCoverColumns,
+                    ViewModel.DrawerCoverRows));
+            }
+
             return ViewModel.GetListDropSlot(movingItemId);
         }
 
@@ -2334,6 +2361,14 @@ public partial class DesktopBoxWindow : Window
             point.Y - padding.Top,
             Math.Max(0, itemList.ActualWidth - padding.Left - padding.Right),
             Math.Max(0, itemList.ActualHeight - padding.Top - padding.Bottom));
+
+        // 自适应自由布局：同盒拖动的落点是「指针所在的那一格」（插入后由该格承载），
+        // 预览框直接用指针格，不再去找最近的空格——否则框和真实落点会不一致。
+        // 跨盒落放仍按空格语义解析。
+        if (!ViewModel.IsFixedSize && movingItemId is not null)
+        {
+            return rawSlot;
+        }
 
         // 固定模式（硬约束）：盒内找不到空位时返回 null，调用方据此拒绝拖放。
         return ViewModel.TryGetAvailableDropSlot(rawSlot.Column, rawSlot.Row, movingItemId, out var slot)
@@ -2399,7 +2434,7 @@ public partial class DesktopBoxWindow : Window
         if (ViewModel.IsDrawerCollapsed)
         {
             var coverMovingItemId = payload?.SourceBoxId == ViewModel.BoxId ? payload.ItemId : (Guid?)null;
-            ShowDrawerCoverDropPreview(coverMovingItemId);
+            ShowDrawerCoverDropPreview(e, coverMovingItemId);
             return;
         }
 
@@ -2479,12 +2514,26 @@ public partial class DesktopBoxWindow : Window
         MappingListDropOverlay.Visibility = Visibility.Collapsed;
     }
 
-    private void ShowDrawerCoverDropPreview(Guid? movingItemId)
+    private void ShowDrawerCoverDropPreview(DragEventArgs e, Guid? movingItemId)
     {
-        // Dropped items append after the last item (see GetDropSlot), so the preview
-        // frame marks the exact cover cell the item will occupy -- the same
-        // "frame == landing spot" contract the normal grid boxes have.
+        // 封面磁贴按行优先顺序绘制：同盒拖动时落点就是指针所在的封面格子，
+        // 跨盒落放会追加到末尾。预览框标记将要占用的格子——与普通网格盒
+        // 「预览框 == 落点」的约定保持一致。
         var insertIndex = ViewModel.Items.Count(item => movingItemId is null || item.Id != movingItemId.Value);
+        if (movingItemId is not null
+            && DrawerCoverItems.ActualWidth > 0
+            && DrawerCoverItems.ActualHeight > 0)
+        {
+            var coverPoint = e.GetPosition(DrawerCoverItems);
+            insertIndex = CalculateCoverCellIndex(
+                coverPoint.X,
+                coverPoint.Y,
+                DrawerCoverItems.ActualWidth,
+                DrawerCoverItems.ActualHeight,
+                ViewModel.DrawerCoverColumns,
+                ViewModel.DrawerCoverRows);
+        }
+
         if (insertIndex >= ViewModel.DrawerCoverCapacity
             || DrawerCoverItems.ActualWidth <= 0
             || DrawerCoverItems.ActualHeight <= 0)
@@ -2528,6 +2577,34 @@ public partial class DesktopBoxWindow : Window
             (cellRow * cellHeight) + inset,
             Math.Max(1, cellWidth - (inset * 2)),
             Math.Max(1, cellHeight - (inset * 2)));
+    }
+
+    /// <summary>
+    /// 封面格子命中的反函数：把封面内的一点换算成行优先的格子序号。
+    /// 折叠封面上同盒拖动时用它选插入位置，确保预览框和落点一致。
+    /// </summary>
+    internal static int CalculateCoverCellIndex(
+        double x,
+        double y,
+        double surfaceWidth,
+        double surfaceHeight,
+        int columns,
+        int rows)
+    {
+        if (surfaceWidth <= 0 || surfaceHeight <= 0)
+        {
+            return 0;
+        }
+
+        var safeColumns = Math.Max(1, columns);
+        var safeRows = Math.Max(1, rows);
+        var cellWidth = surfaceWidth / safeColumns;
+        var cellHeight = surfaceHeight / safeRows;
+        var cellColumn = (int)Math.Floor(Math.Clamp(x, 0, surfaceWidth - 0.001) / cellWidth);
+        var cellRow = (int)Math.Floor(Math.Clamp(y, 0, surfaceHeight - 0.001) / cellHeight);
+        cellColumn = Math.Clamp(cellColumn, 0, safeColumns - 1);
+        cellRow = Math.Clamp(cellRow, 0, safeRows - 1);
+        return (cellRow * safeColumns) + cellColumn;
     }
 
     private void SelectItem(Guid itemId)

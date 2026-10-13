@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using System.Xml.Linq;
@@ -492,6 +492,22 @@ public sealed class DesktopBoxWindowTemplateTests
             "ApplyUnifiedBoxSize",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
         Assert.NotNull(applyMethod);
+    }
+
+    [Fact]
+    public void HeaderRow_CapsItsWidthToTheDrawerCoverWhenCollapsed()
+    {
+        var document = XDocument.Load(GetDesktopBoxWindowXamlPath());
+
+        // m00035：抽屉封面折叠时标题栏不能把盒子撑宽（否则封面缩到 2 列图标后左右留白、尺寸手柄离开盒角）。
+        var header = Assert.Single(
+            document.Descendants(),
+            element => element.Name.LocalName == "Grid"
+                && (string?)element.Attribute("MaxWidth") == "{Binding HeaderMaxWidth}");
+
+        Assert.Equal(
+            "{Binding IsHeaderVisible, Converter={StaticResource BooleanToVisibilityConverter}}",
+            (string?)header.Attribute("Visibility"));
     }
 
     private static string GetDesktopBoxWindowXamlPath() =>

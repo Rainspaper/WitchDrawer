@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using WitchDrawer.App.ViewModels;
 using WitchDrawer.Core;
 using WitchDrawer.Core.Abstractions;
@@ -240,6 +240,134 @@ public sealed class UnifiedBoxSortTests
                 restored.MappingListWidth);
             restored.ResizeMappingListWidth(5000);
             Assert.Equal(DesktopBoxViewModel.MaximumMappingListWidth, restored.MappingListWidth);
+        }
+        finally
+        {
+            CleanupTempRoot(root);
+        }
+    }
+
+    [Fact]
+    public async Task FreeGridDrop_InsertsIntoOccupiedCellAndKeepsSlotShape()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var (drawerService, repository) = await CreateDrawerServiceAsync(root);
+            var box = await drawerService.CreateBoxAsync("普通盒", BoxType.Normal);
+            await drawerService.ImportPathAsync(box.Id, CreateSourceFile(root, "a.txt"), 0, 0);
+            await drawerService.ImportPathAsync(box.Id, CreateSourceFile(root, "b.txt"), 1, 0);
+            await drawerService.ImportPathAsync(box.Id, CreateSourceFile(root, "c.txt"), 0, 1);
+            await drawerService.ImportPathAsync(box.Id, CreateSourceFile(root, "d.txt"), 1, 1);
+
+            var viewModel = CreateViewModel(box, drawerService, repository);
+            await viewModel.LoadAsync();
+            Assert.True(viewModel.IsFreeSort);
+
+            var originalSlots = viewModel.Items
+                .Select(item => (item.GridColumn, item.GridRow))
+                .ToHashSet();
+
+            // 把第二行第一个（c）拖到第一行第二个格位（被 b 占着）：
+            // 以前会退回自己的格子（看起来没反应），现在应插到 b 前面。
+            var moved = await viewModel.DropDrawerItemAsync(
+                viewModel.Items.Single(item => item.DisplayName == "c.txt").Id, 1, 0);
+
+            Assert.True(moved);
+            Assert.Equal(
+                new[] { "a.txt", "c.txt", "b.txt", "d.txt" },
+                viewModel.Items.Select(item => item.DisplayName).ToArray());
+            Assert.True(originalSlots.SetEquals(
+                viewModel.Items.Select(item => (item.GridColumn, item.GridRow))));
+
+            var reloaded = CreateViewModel(box, drawerService, repository);
+            await reloaded.LoadAsync();
+            Assert.Equal(
+                new[] { "a.txt", "c.txt", "b.txt", "d.txt" },
+                reloaded.Items.Select(item => item.DisplayName).ToArray());
+        }
+        finally
+        {
+            CleanupTempRoot(root);
+        }
+    }
+
+    [Fact]
+    public void CalculateGridInsertionIndex_CountsOtherSlotsBeforeTheTargetCell()
+    {
+        var slots = new List<(int GridColumn, int GridRow)>
+        {
+            (0, 0), (1, 0), (0, 1), (1, 1)
+        };
+
+        Assert.Equal(0, DesktopBoxViewModel.CalculateGridInsertionIndex(slots, 0, 0));
+        Assert.Equal(1, DesktopBoxViewModel.CalculateGridInsertionIndex(slots, 1, 0));
+        Assert.Equal(2, DesktopBoxViewModel.CalculateGridInsertionIndex(slots, 0, 1));
+        Assert.Equal(3, DesktopBoxViewModel.CalculateGridInsertionIndex(slots, 1, 1));
+        Assert.Equal(4, DesktopBoxViewModel.CalculateGridInsertionIndex(slots, 3, 3));
+    }
+
+    [Fact]
+    public async Task CollapsedDrawerCoverDrop_InsertsAtTheCoverCell()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var (drawerService, repository) = await CreateDrawerServiceAsync(root);
+            var box = await drawerService.CreateBoxAsync("普通盒", BoxType.Normal);
+            await drawerService.ImportPathAsync(box.Id, CreateSourceFile(root, "a.txt"), 0, 0);
+            await drawerService.ImportPathAsync(box.Id, CreateSourceFile(root, "b.txt"), 1, 0);
+            await drawerService.ImportPathAsync(box.Id, CreateSourceFile(root, "c.txt"), 0, 1);
+
+            var viewModel = CreateViewModel(box, drawerService, repository);
+            await viewModel.LoadDrawerStyleAsync();
+            await viewModel.LoadAsync();
+            Assert.True(viewModel.IsDrawerCollapsed);
+            Assert.True(viewModel.DrawerCoverColumns >= 2);
+
+            // 折叠封面：拖到行优先序号 1 的封面格子，应插到第二个位置，而不是追加到末尾。
+            var moved = await viewModel.DropDrawerItemAsync(
+                viewModel.Items.Single(item => item.DisplayName == "c.txt").Id, 0, 1);
+
+            Assert.True(moved);
+            Assert.Equal(
+                new[] { "a.txt", "c.txt", "b.txt" },
+                viewModel.Items.Select(item => item.DisplayName).ToArray());
+        }
+        finally
+        {
+            CleanupTempRoot(root);
+        }
+    }
+
+    [Fact]
+    public async Task FreeGridDrop_OntoAnOccupiedCell_LandsOnThatExactCell()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var (drawerService, repository) = await CreateDrawerServiceAsync(root);
+            var box = await drawerService.CreateBoxAsync("普通盒", BoxType.Normal);
+            var alpha = await drawerService.ImportPathAsync(
+                box.Id, CreateSourceFile(root, "alpha.txt"), 0, 0);
+            var beta = await drawerService.ImportPathAsync(
+                box.Id, CreateSourceFile(root, "beta.txt"), 1, 0);
+
+            var viewModel = CreateViewModel(box, drawerService, repository);
+            await viewModel.LoadAsync();
+
+            // 把左边的 alpha 拖到 beta 所在的格子：应正好占住那一格（beta 让位），
+            // 而不是像以前那样退回自己的格子。
+            var moved = await viewModel.DropDrawerItemAsync(alpha.Id, 1, 0);
+
+            Assert.True(moved);
+            var movedAlpha = viewModel.Items.Single(item => item.Id == alpha.Id);
+            var movedBeta = viewModel.Items.Single(item => item.Id == beta.Id);
+            Assert.Equal((1, 0), (movedAlpha.GridColumn, movedAlpha.GridRow));
+            Assert.Equal((0, 0), (movedBeta.GridColumn, movedBeta.GridRow));
+            Assert.Equal(
+                new[] { "beta.txt", "alpha.txt" },
+                viewModel.Items.Select(item => item.DisplayName).ToArray());
         }
         finally
         {

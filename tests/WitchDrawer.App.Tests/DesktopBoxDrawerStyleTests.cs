@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using WitchDrawer.App.Infrastructure;
 using WitchDrawer.App.ViewModels;
 using WitchDrawer.Core;
@@ -244,6 +244,67 @@ public sealed class DesktopBoxDrawerStyleTests
 
             Assert.True(viewModel.DrawerCoverColumns >= 2);
             Assert.True(viewModel.DrawerCoverWidth >= 96);
+        }
+        finally
+        {
+            CleanupTempRoot(root);
+        }
+    }
+
+    [Fact]
+    public async Task CollapsedCover_CapsHeaderWidthToTheCover()
+    {
+        // m00035：抽屉封面折叠时标题栏的自然宽度不能成为窗口宽度下限，
+        // 否则封面缩到 2 列图标后盒子仍被标题栏撑宽，图标左右出现空白、右下角尺寸手柄也会离开盒子角。
+        var root = CreateTempRoot();
+        try
+        {
+            var (drawerService, repository) = await CreateDrawerServiceAsync(root);
+            var box = await drawerService.CreateBoxAsync("mapping", BoxType.Mapping);
+            var viewModel = CreateViewModel(box, drawerService, repository);
+            await viewModel.LoadDrawerStyleAsync();
+            await viewModel.LoadDrawerCoverSizeAsync();
+
+            Assert.True(viewModel.IsDrawerCollapsed);
+            Assert.Equal(viewModel.DrawerCoverWidth, viewModel.HeaderMaxWidth);
+
+            // 缩到 2 列：封面与标题栏上限一起收窄，盒子才能跟着变窄。
+            viewModel.ResizeDrawerCover(60, viewModel.DrawerCoverHeight);
+            Assert.Equal(2, viewModel.DrawerCoverColumns);
+            Assert.Equal(viewModel.DrawerCoverWidth, viewModel.HeaderMaxWidth);
+
+            // 展开抽屉后不再限制标题栏宽度，恢复原布局。
+            viewModel.IsDrawerExpanded = true;
+            Assert.True(double.IsPositiveInfinity(viewModel.HeaderMaxWidth));
+        }
+        finally
+        {
+            CleanupTempRoot(root);
+        }
+    }
+
+    [Fact]
+    public async Task CollapsedCover_NotifiesHeaderMaxWidthChanges()
+    {
+        // m00737：HeaderMaxWidth 是计算属性，不主动通知时标题栏 MaxWidth 绑定只会在首次求值生效。
+        var root = CreateTempRoot();
+        try
+        {
+            var (drawerService, repository) = await CreateDrawerServiceAsync(root);
+            var box = await drawerService.CreateBoxAsync("mapping", BoxType.Mapping);
+            var viewModel = CreateViewModel(box, drawerService, repository);
+            await viewModel.LoadDrawerStyleAsync();
+            await viewModel.LoadDrawerCoverSizeAsync();
+            var raised = new List<string>();
+            viewModel.PropertyChanged += (_, e) => raised.Add(e.PropertyName ?? string.Empty);
+            viewModel.ResizeDrawerCover(60, viewModel.DrawerCoverHeight);
+            Assert.Contains(nameof(DesktopBoxViewModel.HeaderMaxWidth), raised);
+            raised.Clear();
+            viewModel.IsDrawerExpanded = true;
+            Assert.Contains(nameof(DesktopBoxViewModel.HeaderMaxWidth), raised);
+            raised.Clear();
+            viewModel.IsDrawerExpanded = false;
+            Assert.Contains(nameof(DesktopBoxViewModel.HeaderMaxWidth), raised);
         }
         finally
         {

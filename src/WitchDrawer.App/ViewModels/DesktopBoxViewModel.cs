@@ -54,8 +54,11 @@ public sealed class DesktopBoxViewModel : ObservableObject
     private const double DefaultDrawerCoverHeight = 112;
     private const double MaximumDrawerCoverDimension = 720;
     private const double DrawerTitleHeightCompensation = 9;
-    /// <summary>网格内容宽度换算成盒子外宽时要补的边框/留白（窗口 Border 外边距 + 图标列表内边距）。</summary>
-    internal const double MergedGridWidthChrome = 28;
+    /// <summary>
+    /// 网格内容宽度换算成盒子外宽时要补的边框/留白：窗口 Border 外边距 6×2 + Border 边框 1×2
+    /// + 图标列表左右外边距 6×2 + 内边距 2×2 = 30（图标格宽 × 列数 + 该值 == 盒子外宽）。
+    /// </summary>
+    internal const double MergedGridWidthChrome = 30;
 
     /// <summary>窗口 Border 左右（或上下）外边距之和：封面尺寸换算成窗口外宽时要加上它。</summary>
     internal const double WindowBorderInset = 12;
@@ -194,13 +197,24 @@ public sealed class DesktopBoxViewModel : ObservableObject
     /// <list type="bullet">
     /// <item>抽屉封面视图（收起态）：跟着封面自己的尺寸走 —— 封面上的斜杠手柄就是唯一的尺寸手柄，
     /// 拖它封面变大，窗口跟着变大（不再是"里面一个手柄、外面一个手柄"两套）。</item>
-    /// <item>其余情况（网格/列表）：用用户设定的映射盒宽度。</item>
+    /// <item>其余情况（网格/列表）：用用户设定的映射盒宽度，并按"整数列图标"向下取整对齐到
+    /// 边框留白 + 列数 × 图标格宽 —— 网格里图标正好铺满盒子（不留余数空带），右下角尺寸
+    /// 手柄因此落在图标右下角；网格与列表共用同一外宽，切换时盒子不会变宽变窄。</item>
     /// </list>
     /// </summary>
-    public double HostBoxWidth => Math.Clamp(
-        IsUnifiedCoverView ? _drawerCoverWidth + WindowBorderInset : _mappingListWidth,
-        MinimumMappingListWidth,
-        MaximumMappingListWidth);
+    public double HostBoxWidth
+    {
+        get
+        {
+            var requested = Math.Clamp(
+                IsUnifiedCoverView ? _drawerCoverWidth + WindowBorderInset : _mappingListWidth,
+                MinimumMappingListWidth,
+                MaximumMappingListWidth);
+            return UsesUnifiedBoxSize && !IsUnifiedCoverView
+                ? SnapHostWidthToGridColumns(requested, LayoutSettings.ItemSlotWidth)
+                : requested;
+        }
+    }
 
     /// <summary>合并宿主当前是否显示"抽屉封面"视图（封面自带尺寸手柄，窗口外宽跟着它）。</summary>
     private bool IsUnifiedCoverView => UsesUnifiedBoxSize && IsDrawerCollapsed;
@@ -225,6 +239,24 @@ public sealed class DesktopBoxViewModel : ObservableObject
         var columns = (int)Math.Floor(usableWidth / slotWidth);
         return Math.Clamp(columns, 1, itemCount);
     }
+
+    /// <summary>
+    /// 把合并宿主的统一外宽对齐到"整数列图标"：外宽 = <see cref="MergedGridWidthChrome"/> + 列数 × <paramref name="slotWidth"/>。
+    /// <paramref name="boxWidth"/> 是用户拖出来的宽度，对齐时向下取整，只会变窄（不超出用户设定与窗口上限）。
+    /// 这样网格里图标正好铺满盒子、不留余数空带，右下角尺寸手柄也就落在图标右下角。
+    /// </summary>
+    internal static double SnapHostWidthToGridColumns(double boxWidth, double slotWidth)
+    {
+        if (!double.IsFinite(boxWidth) || !double.IsFinite(slotWidth) || slotWidth <= 0)
+        {
+            return boxWidth;
+        }
+
+        var usableWidth = Math.Max(slotWidth, boxWidth - MergedGridWidthChrome);
+        var columns = Math.Max(1, (int)Math.Floor(usableWidth / slotWidth));
+        return MergedGridWidthChrome + (columns * slotWidth);
+    }
+
     public double MappingListHeight => _mappingListHeight;
 
     /// <summary>
@@ -399,6 +431,7 @@ public sealed class DesktopBoxViewModel : ObservableObject
             if (SetProperty(ref _isDrawerExpanded, value))
             {
                 OnPropertyChanged(nameof(IsDrawerCollapsed));
+                OnPropertyChanged(nameof(HeaderMaxWidth));
                 OnPropertyChanged(nameof(IsHeaderVisible));
                 OnPropertyChanged(nameof(HeaderRowHeight));
                 OnPropertyChanged(nameof(ShowFileEmptyState));
@@ -455,6 +488,9 @@ public sealed class DesktopBoxViewModel : ObservableObject
     /// <summary>
     /// 折叠时标题栏最大宽度=封面宽度，避免标题栏把盒子撑宽；
     /// 展开/普通视图不限宽。
+    /// 由 DesktopBoxWindow.xaml 的标题栏 Grid 绑定（MaxWidth="{Binding HeaderMaxWidth}"），改动这里即可控制盒子最小宽度。
+    /// 注意：IsDrawerCollapsed / DrawerCoverWidth 变化处必须同时 OnPropertyChanged(HeaderMaxWidth)，
+    /// 否则标题栏 MaxWidth 只按首次求值生效，盒子仍会被标题栏撑宽（m00737）。
     /// </summary>
     public double HeaderMaxWidth => IsDrawerCollapsed
         ? DrawerCoverWidth
@@ -673,6 +709,7 @@ public sealed class DesktopBoxViewModel : ObservableObject
         OnPropertyChanged(nameof(IsDrawerBox));
         OnPropertyChanged(nameof(IsDrawerExpanded));
         OnPropertyChanged(nameof(IsDrawerCollapsed));
+        OnPropertyChanged(nameof(HeaderMaxWidth));
         OnPropertyChanged(nameof(IsTitleVisible));
         OnPropertyChanged(nameof(IsFileNameVisible));
         OnPropertyChanged(nameof(SupportsRollUp));
@@ -761,6 +798,7 @@ public sealed class DesktopBoxViewModel : ObservableObject
         OnPropertyChanged(nameof(IsDrawerStyleEnabled));
         OnPropertyChanged(nameof(IsDrawerExpanded));
         OnPropertyChanged(nameof(IsDrawerCollapsed));
+        OnPropertyChanged(nameof(HeaderMaxWidth));
         OnPropertyChanged(nameof(IsMappingListMode));
         OnPropertyChanged(nameof(IsGridMode));
         OnPropertyChanged(nameof(SupportsRollUp));
@@ -1378,10 +1416,20 @@ public sealed class DesktopBoxViewModel : ObservableObject
                     {
                         await MoveMappingListItemWithinBoxAsync(currentItem, targetRow);
                     }
+                    else if (IsDrawerCollapsed)
+                    {
+                        // 折叠封面拖着走时，落点是封面格子序号（行优先），按插入序重排。
+                        await ReorderItemAsync(currentItem, targetRow);
+                    }
                     else
                     {
                         await MoveItemWithinBoxAsync(currentItem, targetColumn, targetRow);
                     }
+                }
+                else
+                {
+                    // 排序模式下顺序由排序键决定，拖动被忽略：给出提示，避免误以为拖动失灵。
+                    StatusText = "排序模式下拖动不改变位置，切回自由排序可手动整理";
                 }
             }
             else
@@ -1554,6 +1602,7 @@ public sealed class DesktopBoxViewModel : ObservableObject
             OnPropertyChanged(nameof(IsGridMode));
             OnPropertyChanged(nameof(IsDrawerExpanded));
             OnPropertyChanged(nameof(IsDrawerCollapsed));
+            OnPropertyChanged(nameof(HeaderMaxWidth));
             OnPropertyChanged(nameof(HeaderRowHeight));
             // 网格/列表切换会改变"内容兜底"是否生效（列表模式不兜底），统一外宽要跟着重算。
             NotifyHostWidthChanged();
@@ -1949,6 +1998,8 @@ public sealed class DesktopBoxViewModel : ObservableObject
         }
 
         Items.ReplaceAll(reordered);
+        // 合并宿主也会重排 Items 顺序，折叠封面的磁贴同样要跟着刷新。
+        RefreshDrawerPreview();
         UpdateGridCanvasSize();
     }
 
@@ -1967,15 +2018,39 @@ public sealed class DesktopBoxViewModel : ObservableObject
             return;
         }
 
-        if (item.GridColumn == targetColumn && item.GridRow == targetRow)
+        var otherSlots = Items
+            .Where(candidate => candidate.Id != item.Id)
+            .Select(candidate => (candidate.GridColumn, candidate.GridRow))
+            .ToList();
+
+        // 自适应自由布局：落点理解为「插到第几个位置」。以前是「找最近的空格」，
+        // 目标格被占着时会退回自己原来的格子（看起来完全没反应），第一行排满后就再也插不进第一行。
+        var maxRow = Items.Max(candidate => candidate.GridRow);
+        var maxColumn = Items.Max(candidate => candidate.GridColumn);
+        var outsideExtent = otherSlots.Count == 0
+            || targetRow > maxRow
+            || targetColumn > maxColumn;
+        if (!IsFixedSize && !outsideExtent)
         {
+            var orderedSlots = Items
+                .Select(candidate => (candidate.GridColumn, candidate.GridRow))
+                .ToList();
+            var insertIndex = CalculateGridInsertionIndex(otherSlots, targetColumn, targetRow);
+
+            // 「预览框 == 落点」：插入位置对应的格位若不是指针所在格，就试相邻的那个，
+            // 让被拖项正好落在指针指着的格子（拖回自己原来的格子仍然是空操作）。
+            if (insertIndex + 1 < orderedSlots.Count
+                && orderedSlots[insertIndex] != (targetColumn, targetRow)
+                && orderedSlots[insertIndex + 1] == (targetColumn, targetRow))
+            {
+                insertIndex++;
+            }
+
+            await ReorderItemAsync(item, insertIndex);
             return;
         }
 
-        var occupiedSlots = Items
-            .Where(candidate => candidate.Id != item.Id)
-            .Select(candidate => (candidate.GridColumn, candidate.GridRow))
-            .ToHashSet();
+        var occupiedSlots = otherSlots.ToHashSet();
         var availableSlot = IsFixedSize
             ? TryFindFreeSlotInFixedBounds(targetColumn, targetRow, occupiedSlots, out var fixedSlot)
                 ? fixedSlot
@@ -1984,14 +2059,41 @@ public sealed class DesktopBoxViewModel : ObservableObject
         targetColumn = availableSlot.Column;
         targetRow = availableSlot.Row;
 
+        if (item.GridColumn == targetColumn && item.GridRow == targetRow)
+        {
+            return;
+        }
+
         await _drawerService.UpdateItemGridPositionAsync(item.Id, targetColumn, targetRow);
         item.SetGridPosition(targetColumn, targetRow, LayoutSettings);
         UpdateGridCanvasSize();
     }
 
-    private async Task MoveMappingListItemWithinBoxAsync(
-        DrawerItemViewModel item,
-        int targetIndex)
+    /// <summary>
+    /// 自由布局的拖放插入序：把其它图标按行优先顺序数一遍，统计排在目标格「之前」的个数，
+    /// 即被拖拽项去掉后应插入的索引（与列表模式的插入语义一致）。
+    /// </summary>
+    internal static int CalculateGridInsertionIndex(
+        IReadOnlyList<(int GridColumn, int GridRow)> otherSlots,
+        int targetColumn,
+        int targetRow)
+    {
+        var index = 0;
+        foreach (var slot in otherSlots.OrderBy(slot => slot.GridRow).ThenBy(slot => slot.GridColumn))
+        {
+            if (slot.GridRow > targetRow
+                || (slot.GridRow == targetRow && slot.GridColumn >= targetColumn))
+            {
+                break;
+            }
+
+            index++;
+        }
+
+        return index;
+    }
+
+    private async Task ReorderItemAsync(DrawerItemViewModel item, int targetIndex)
     {
         var originalOrder = Items.ToList();
         var sourceIndex = originalOrder.FindIndex(candidate => candidate.Id == item.Id);
@@ -2035,6 +2137,13 @@ public sealed class DesktopBoxViewModel : ObservableObject
 
         Items.ReplaceAll(reordered);
         UpdateGridCanvasSize();
+        // 封面磁贴按 Items 顺序绘制，重排后必须立即刷新，否则折叠封面上看不到变化。
+        RefreshDrawerPreview();
+    }
+
+    private Task MoveMappingListItemWithinBoxAsync(DrawerItemViewModel item, int targetIndex)
+    {
+        return ReorderItemAsync(item, targetIndex);
     }
 
     /// <summary>
@@ -2375,6 +2484,7 @@ public sealed class DesktopBoxViewModel : ObservableObject
         OnPropertyChanged(nameof(DrawerHasOverflow));
         OnPropertyChanged(nameof(DrawerDirectItemCount));
         OnPropertyChanged(nameof(DrawerContentHeight));
+        OnPropertyChanged(nameof(HeaderMaxWidth));
         RefreshDrawerPreview();
 
         if (UsesUnifiedBoxSize)
@@ -2413,6 +2523,7 @@ public sealed class DesktopBoxViewModel : ObservableObject
         OnPropertyChanged(nameof(IsDrawerStyleEnabled));
         OnPropertyChanged(nameof(IsDrawerExpanded));
         OnPropertyChanged(nameof(IsDrawerCollapsed));
+        OnPropertyChanged(nameof(HeaderMaxWidth));
         OnPropertyChanged(nameof(IsHeaderVisible));
         OnPropertyChanged(nameof(HeaderRowHeight));
         OnPropertyChanged(nameof(DrawerContentHeight));
@@ -2850,6 +2961,13 @@ public sealed class DesktopBoxViewModel : ObservableObject
 
         UpdateItemIconSizes();
         UpdateGridCanvasSize();
+        if (UsesUnifiedBoxSize
+            && e.PropertyName is nameof(DesktopBoxLayoutSettings.ItemSlotWidth))
+        {
+            // 图标格宽变化会改变"整数列"外宽：统一外宽要重新对齐，否则网格里会留下余数空带。
+            NotifyHostWidthChanged();
+        }
+
         OnPropertyChanged(nameof(HeaderRowHeight));
         OnPropertyChanged(nameof(GridViewportWidth));
         OnPropertyChanged(nameof(GridViewportHeight));

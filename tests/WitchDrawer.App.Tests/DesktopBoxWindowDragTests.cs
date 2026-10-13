@@ -1,4 +1,4 @@
-using System.Windows.Media;
+﻿using System.Windows.Media;
 using WitchDrawer.App.ViewModels;
 using WitchDrawer.App.Views;
 
@@ -174,4 +174,47 @@ public sealed class InternalDragCompletionTests
         var second = DesktopBoxWindow.DesktopBoxDragPayload.Create(itemId, sourceBoxId);
         Assert.False(DesktopBoxWindow.ConsumeDroppedInsideWitchDrawer(second));
     }
+    [Theory]
+    [InlineData(0, 0, 100, 100, 2, 2, 0)]
+    [InlineData(60, 10, 100, 100, 2, 2, 1)]
+    [InlineData(10, 60, 100, 100, 2, 2, 2)]
+    [InlineData(60, 60, 100, 100, 2, 2, 3)]
+    [InlineData(-5, -5, 100, 100, 2, 2, 0)]
+    [InlineData(500, 500, 100, 100, 2, 2, 3)]
+    [InlineData(10, 10, 0, 0, 2, 2, 0)]
+    public void CalculateCoverCellIndex_MapsPointToRowMajorCell(
+        double x,
+        double y,
+        double width,
+        double height,
+        int columns,
+        int rows,
+        int expected)
+    {
+        Assert.Equal(
+            expected,
+            DesktopBoxWindow.CalculateCoverCellIndex(x, y, width, height, columns, rows));
+    }
+
+    [Fact]
+    public void CalculateCoverCellIndex_IsInverseOfCalculateCoverCellRect()
+    {
+        const double surfaceWidth = 148;
+        const double surfaceHeight = 74;
+        for (var index = 0; index < 8; index++)
+        {
+            var rect = DesktopBoxWindow.CalculateCoverCellRect(
+                index, 4, 2, surfaceWidth, surfaceHeight, 0);
+            Assert.Equal(
+                index,
+                DesktopBoxWindow.CalculateCoverCellIndex(
+                    rect.Left + (rect.Width / 2),
+                    rect.Top + (rect.Height / 2),
+                    surfaceWidth,
+                    surfaceHeight,
+                    4,
+                    2));
+        }
+    }
+
 }

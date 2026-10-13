@@ -1,0 +1,3 @@
+# codebase-memory ignore rules (gitignore syntax)
+# Exclude agent scratch/backup dirs that pollute symbol/graph queries
+.rivet/

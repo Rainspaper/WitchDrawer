@@ -1,8 +1,9 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
 using System.Windows;
+using System.Windows.Threading;
 using CommunityToolkit.Mvvm.Messaging;
 using WitchDrawer.App.Messages;
 using WitchDrawer.App.ViewModels;
@@ -58,6 +59,9 @@ public sealed class DesktopBoxManager
     private bool _isAdjustingPosition;
     private DesktopBoxWindow? _mergePreviewHost;
     private readonly DesktopToggleVisibilityState _desktopToggleVisibility = new();
+    private readonly FullscreenSuppressionState _fullscreenSuppression = new();
+    private readonly DispatcherTimer _fullscreenReevaluationTimer;
+    private nint _lastFullscreenWindow;
 
     public DesktopBoxManager(
         DrawerService drawerService,
@@ -90,6 +94,17 @@ public sealed class DesktopBoxManager
         {
             _logger.Info("Foreground window monitoring is unavailable; Show Desktop layering may be limited.");
         }
+
+        // 全屏程序（游戏、全屏视频）在前台时把同显示器的盒子藏起来：盒子是 Shell
+        // 属主的常驻分层窗口，只靠压底无法保证永远待在全屏画面之下（实测偶发浮上去）。
+        // WinEvent 钩子可能漏掉全屏切换（例如 Alt+Enter），再用每秒一次的复查兜底，
+        // 代价只是几次窗口查询。
+        _fullscreenReevaluationTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromSeconds(1),
+        };
+        _fullscreenReevaluationTimer.Tick += OnFullscreenReevaluationTick;
+        _fullscreenReevaluationTimer.Start();
 
         // 盒子带 WS_EX_NOACTIVATE，点击不激活窗口，桌面点击不会产生 Deactivated
         // 事件，选中框无法自动清除。全局鼠标钩子补上"外部点击"信号。
@@ -183,12 +198,18 @@ public sealed class DesktopBoxManager
                 win.PreviewMouseLeftButtonUp -= OnWindowMouseUp;
                 win.ForceClose();
                 _windows.Remove(removedId);
+                _fullscreenSuppression.Forget(removedId);
                 if (_mergePreviewHost is DesktopBoxWindow previewHost
                     && previewHost.ViewModel.BoxId == removedId)
                 {
                     _mergePreviewHost = null;
                 }
             }
+
+            // 刷新期间可能新建窗口：先算一次"当前被全屏程序占用的显示器"，
+            // 让新窗口在第一次显示前就知道要不要藏起来，避免闪一帧。
+            var fullscreenMonitor = ResolveFullscreenMonitor(
+                ForegroundWindowMonitor.GetCurrentForegroundWindow());
 
             for (var index = 0; index < boxes.Count; index++)
             {
@@ -276,6 +297,13 @@ public sealed class DesktopBoxManager
                         // 整体隐藏期间刷新重建出来的窗口也要跟着藏起来。
                         window.Hide();
                     }
+                    else if (fullscreenMonitor != nint.Zero
+                        && FullscreenWindowDetector.GetMonitorHandle(window.NativeHandle) == fullscreenMonitor)
+                    {
+                        // 全屏程序正占着这块显示器：新窗口也得先退场（随后
+                        // ApplyFullscreenSuppression 会把它登记进压制集合）。
+                        window.Hide();
+                    }
 
                     window.SetPositionLocked(isPositionLocked);
                     window.SetDesktopForeground(_desktopIsForeground);
@@ -325,6 +353,8 @@ public sealed class DesktopBoxManager
             }
 
             ResolveWindowOverlaps();
+            // 新建/重建的窗口统一重算一次全屏压制，保证压制集合与实际窗口一致。
+            ApplyFullscreenSuppression(ForegroundWindowMonitor.GetCurrentForegroundWindow());
             if (DesktopToolWindow.RepairShellLastActivePopup())
             {
                 _logger.Info("Reset Progman last-active-popup after attaching desktop boxes.");
@@ -599,8 +629,9 @@ public sealed class DesktopBoxManager
                 window.Show();
             }
 
-            // 用户显式显示这个盒子：它不再算被「双击桌面」整体隐藏。
+            // 用户显式显示这个盒子：它不再算被「双击桌面」整体隐藏，也不再被全屏压制。
             _desktopToggleVisibility.Forget(boxId);
+            _fullscreenSuppression.Forget(boxId);
             window.QueueSendToBottom();
             return true;
         }
@@ -626,7 +657,7 @@ public sealed class DesktopBoxManager
                 return;
             }
 
-            // 用户显式要求显示全部：整体隐藏状态就此结束。
+            // 用户显式要求显示全部：整体隐藏状态就此结束，全屏压制也一并让位。
             _desktopToggleVisibility.EndHide();
             var hiddenWindows = SnapshotHiddenWindows(
                 _windows.Values,
@@ -639,6 +670,7 @@ public sealed class DesktopBoxManager
                     return;
                 }
 
+                _fullscreenSuppression.Forget(window.ViewModel.BoxId);
                 window.Show();
                 window.QueueSendToBottom();
             }
@@ -690,6 +722,12 @@ public sealed class DesktopBoxManager
 
             foreach (var boxId in _desktopToggleVisibility.EndHide())
             {
+                // 正被全屏程序压制的盒子不在这里恢复：用户要的是"不显示在全屏程序上面"。
+                if (_fullscreenSuppression.IsSuppressed(boxId))
+                {
+                    continue;
+                }
+
                 if (_windows.TryGetValue(boxId, out var window))
                 {
                     window.Show();
@@ -894,6 +932,8 @@ public sealed class DesktopBoxManager
         desktopContextMenuRestoreCts?.Dispose();
         _foregroundWindowMonitor.ForegroundWindowChanged -= OnForegroundWindowChanged;
         _foregroundWindowMonitor.Dispose();
+        _fullscreenReevaluationTimer.Stop();
+        _fullscreenReevaluationTimer.Tick -= OnFullscreenReevaluationTick;
         _mouseButtonMonitor.MouseButtonDown -= OnGlobalMouseButtonDown;
         _mouseButtonMonitor.MouseButtonPressed -= OnGlobalMouseButtonPressed;
         _mouseButtonMonitor.Dispose();
@@ -1162,6 +1202,103 @@ public sealed class DesktopBoxManager
             Interlocked.Exchange(ref _showDesktopShortcutObservedUntilTick, 0);
             ShowDesktopActivated?.Invoke(this, EventArgs.Empty);
         }
+
+        ApplyFullscreenSuppression(windowHandle);
+    }
+
+    private void OnFullscreenReevaluationTick(object? sender, EventArgs e)
+    {
+        ApplyFullscreenSuppression(ForegroundWindowMonitor.GetCurrentForegroundWindow());
+    }
+
+    /// <summary>
+    /// 全屏程序（游戏、全屏视频）在前台时，藏起与它同显示器的收纳盒，离开后恢复。
+    ///
+    /// 盒子是 Shell 属主的常驻分层窗口，被强制压在 z 序最底部；一旦桌面壳偶发浮到
+    /// 全屏窗口之上（双击桌面、Explorer 重建桌面等时机会出现），盒子就会跟着浮上去。
+    /// 因此这里是主动退场，而不是继续依赖压底。只按显示器匹配：多显示器时另一块屏
+    /// 上的盒子照常可见。
+    /// </summary>
+    private void ApplyFullscreenSuppression(nint foregroundWindowHandle)
+    {
+        if (_closing)
+        {
+            return;
+        }
+
+        var fullscreenMonitor = ResolveFullscreenMonitor(foregroundWindowHandle);
+
+        foreach (var (boxId, window) in _windows)
+        {
+            var shouldSuppress = fullscreenMonitor != nint.Zero
+                && FullscreenWindowDetector.GetMonitorHandle(window.NativeHandle) == fullscreenMonitor;
+
+            if (shouldSuppress)
+            {
+                if (!_fullscreenSuppression.BeginSuppress(boxId))
+                {
+                    continue;
+                }
+
+                if (window.IsVisible)
+                {
+                    window.Hide();
+                }
+
+                window.CloseTransientOverlaysForFullscreen();
+                _logger.Info($"Hid box {boxId} because a fullscreen app owns its monitor.");
+                continue;
+            }
+
+            if (!_fullscreenSuppression.EndSuppress(boxId))
+            {
+                continue;
+            }
+
+            // 只恢复「被全屏压制藏起来」的窗口：用户用 X 关掉的盒子、以及仍被
+            // 「双击桌面」整体隐藏的盒子都不能在这里被拉起来。
+            if (!window.IsVisible && !_desktopToggleVisibility.HiddenBoxIds.Contains(boxId))
+            {
+                window.Show();
+                window.QueueSendToBottom();
+            }
+
+            _logger.Info($"Restored box {boxId} after the fullscreen app left.");
+        }
+
+        if (fullscreenMonitor != nint.Zero)
+        {
+            foreach (var window in _windows.Values)
+            {
+                window.CloseTransientOverlaysForFullscreen();
+            }
+        }
+    }
+
+    /// <summary>
+    /// 解析当前应该被压制的显示器：前台窗口本身是占满显示器的程序时用它的显示器。
+    ///
+    /// 前台切到我们自己的窗口（快捷面板、抽屉弹窗、设置窗口）时沿用上一次的判定，
+    /// 否则会被误读成「全屏程序已退出」，把盒子放回全屏画面之上；上一次的全屏窗口
+    /// 若已关闭/最小化/不再占满，则视为全屏结束。
+    /// </summary>
+    private nint ResolveFullscreenMonitor(nint foregroundWindowHandle)
+    {
+        if (FullscreenWindowDetector.IsOwnProcessWindow(foregroundWindowHandle))
+        {
+            return FullscreenWindowDetector.IsFullscreenAppWindow(_lastFullscreenWindow)
+                ? FullscreenWindowDetector.GetMonitorHandle(_lastFullscreenWindow)
+                : nint.Zero;
+        }
+
+        if (FullscreenWindowDetector.TryGetFullscreenMonitor(foregroundWindowHandle, out var monitorHandle))
+        {
+            _lastFullscreenWindow = foregroundWindowHandle;
+            return monitorHandle;
+        }
+
+        _lastFullscreenWindow = nint.Zero;
+        return nint.Zero;
     }
 
 

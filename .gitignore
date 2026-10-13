@@ -28,3 +28,9 @@ artifacts/
 .omo/
 .serena/
 .workbuddy/
+
+# 本地 AI 助手工作目录（.rivet）
+.rivet/
+
+# 本地 pytest 缓存目录
+.pytest_cache/

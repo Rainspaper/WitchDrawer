@@ -9,7 +9,6 @@ public static class DesktopIconVisibility
     private const string ExplorerAdvancedRegistryPath =
         @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
     private const string HideIconsValueName = "HideIcons";
-    private const uint WindowMessageSettingChange = 0x001A;
     private const uint SendMessageAbortIfHung = 0x0002;
     private const uint ShellChangeAssociationChanged = 0x08000000;
     private const uint ShellNotifyFlushNoWait = 0x2000;
@@ -21,7 +20,6 @@ public static class DesktopIconVisibility
     private const uint MemoryCommitReserve = 0x3000;
     private const uint MemoryRelease = 0x8000;
     private const uint PageReadWrite = 0x04;
-    private static readonly nint BroadcastWindow = 0xFFFF;
 
     public static bool IsHidden()
     {
@@ -120,16 +118,20 @@ public static class DesktopIconVisibility
         ShowWindow(desktopListView, hidden ? ShowWindowHide : ShowWindowShow);
     }
 
+    /// <summary>
+    /// 桌面图标的显隐由 <see cref="SetDesktopListViewHidden"/> 直接改可见性即时生效，
+    /// 注册表值负责跨资源管理器重启保持状态；这里只补一次外壳关联变更通知，让资源管理器
+    /// 刷新图标状态。
+    /// 注意：不要再向 HWND_BROADCAST 广播 WM_SETTINGCHANGE（旧提交 bd7e991 的做法）。
+    /// 全局广播会打到所有顶层窗口：实测火绒流量监控悬浮窗（类名 HRNETFLOWTRAY，贴在主屏
+    /// 底边自动隐藏）每收到一次广播就向右平移约 19–20 px，而只发 SHChangeNotify 或只写
+    /// 注册表都不会引起位移（2026-10-08 实机逐因子测量）。
+    /// </summary>
     private static void NotifyDesktopIconSettingChanged()
     {
         SHChangeNotify(
             ShellChangeAssociationChanged,
             ShellNotifyFlushNoWait,
-            nint.Zero,
-            nint.Zero);
-        SendNotifyMessageW(
-            BroadcastWindow,
-            WindowMessageSettingChange,
             nint.Zero,
             nint.Zero);
     }
@@ -331,14 +333,6 @@ public static class DesktopIconVisibility
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ShowWindow(nint window, int command);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SendNotifyMessageW(
-        nint window,
-        uint message,
-        nint wParam,
-        nint lParam);
 
     [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW")]
     private static extern nint SendMessageTimeoutPointer(

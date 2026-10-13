@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using WitchDrawer.App.ViewModels;
 using WitchDrawer.Core;
 using WitchDrawer.Core.Abstractions;
@@ -146,18 +146,33 @@ public sealed class TabHostBehaviorTests
             Assert.InRange(host.MappingListViewWidth, 1, defaultWidth);
 
             // 拖拽宽度（列表模式那套手柄）改的是同一个值，两种模式一起变。
+            // 统一外宽在网格模式下会向下取整到"整数列图标"：右下角尺寸手柄正好落在图标右下角，盒子里不留余数空带。
             host.ResizeMappingListWidth(300);
-            Assert.Equal(300, host.HostBoxWidth);
+            var snappedWidth = DesktopBoxViewModel.SnapHostWidthToGridColumns(
+                300,
+                host.LayoutSettings.ItemSlotWidth);
+            Assert.Equal(snappedWidth, host.HostBoxWidth);
+            Assert.True(snappedWidth <= 300);
             Assert.True(host.MappingListViewWidth < 300);
 
             // 用户拖过宽度后内容不再影响它：切到列表模式也不会被撑宽。
             await host.UseMappingListModeCommand.ExecuteAsync(null);
             Assert.True(host.IsMappingListMode);
-            Assert.Equal(300, host.HostBoxWidth);
+            Assert.Equal(snappedWidth, host.HostBoxWidth);
+            Assert.Equal(
+                0d,
+                (host.HostBoxWidth - DesktopBoxViewModel.MergedGridWidthChrome)
+                    % host.LayoutSettings.ItemSlotWidth,
+                precision: 6);
 
-            // 过窄仍被夹到下限，不会把内容裁掉。
+            // 过窄仍被夹到下限，不会把内容裁掉（对齐后只会比下限窄不到一格图标）。
             host.ResizeMappingListWidth(40);
-            Assert.Equal(DesktopBoxViewModel.MinimumMappingListWidth, host.HostBoxWidth);
+            Assert.Equal(DesktopBoxViewModel.MinimumMappingListWidth, host.MappingListWidth);
+            Assert.Equal(
+                DesktopBoxViewModel.SnapHostWidthToGridColumns(
+                    DesktopBoxViewModel.MinimumMappingListWidth,
+                    host.LayoutSettings.ItemSlotWidth),
+                host.HostBoxWidth);
 
             // 切标签前后外宽一致（除内容确实更宽的情况，本用例内容为空）。
             var widthBeforeSwitch = host.HostBoxWidth;
