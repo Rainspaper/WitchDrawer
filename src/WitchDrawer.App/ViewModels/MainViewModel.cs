@@ -25,6 +25,8 @@ public sealed class MainViewModel : ObservableObject
     internal const string EditorFollowsBoxOpacitySettingKey = "EditorFollowsBoxOpacity";
     internal const string BoxCornerRadiusSettingKey = "BoxCornerRadius";
     internal const string DesktopDoubleClickSettingKey = "DesktopDoubleClickToggle";
+    internal const string DesktopDoubleClickDefaultVersionSettingKey = "DesktopDoubleClickDefaultVersion";
+    internal const string DesktopDoubleClickDefaultVersion = "1";
     internal const string AboutPageShownSettingKey = "AboutPageShown";
     private const string StartupRegistryKeyName = "WitchDrawer";
 
@@ -503,6 +505,7 @@ public sealed class MainViewModel : ObservableObject
 
             LaunchOnStartup = ReadStartupRegistry();
             AreDesktopIconsHidden = DesktopIconVisibility.IsHidden();
+            await ApplyDesktopDoubleClickDefaultOffMigrationAsync();
             var desktopDoubleClickSetting =
                 await _drawerService.GetSettingAsync(DesktopDoubleClickSettingKey);
             IsDesktopDoubleClickEnabled =
@@ -1323,6 +1326,35 @@ public sealed class MainViewModel : ObservableObject
             OnPropertyChanged(nameof(IsDesktopDoubleClickEnabled));
             StatusText = exception.Message;
         }
+    }
+
+    /// <summary>
+    /// 「双击桌面切换图标」默认关闭迁移（一次性）：该功能误触会隐藏全部桌面
+    /// 图标（用户会以为桌面文件消失），且历史存量 True 在手动启动的实例上仍会
+    /// 生效（silent 自启实例已在 App 层禁用）。升级时把存量 True 重置为关闭，
+    /// 并写入版本键；此后用户主动开启的选择不会再被重置。
+    /// </summary>
+    private async Task ApplyDesktopDoubleClickDefaultOffMigrationAsync()
+    {
+        var migrationVersion = await _drawerService.GetSettingAsync(
+            DesktopDoubleClickDefaultVersionSettingKey);
+        if (string.Equals(
+                migrationVersion,
+                DesktopDoubleClickDefaultVersion,
+                StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var savedSetting = await _drawerService.GetSettingAsync(DesktopDoubleClickSettingKey);
+        if (bool.TryParse(savedSetting, out var savedEnabled) && savedEnabled)
+        {
+            await _drawerService.SetSettingAsync(DesktopDoubleClickSettingKey, bool.FalseString);
+        }
+
+        await _drawerService.SetSettingAsync(
+            DesktopDoubleClickDefaultVersionSettingKey,
+            DesktopDoubleClickDefaultVersion);
     }
 
     private async Task ToggleDrawerStyleAsync()

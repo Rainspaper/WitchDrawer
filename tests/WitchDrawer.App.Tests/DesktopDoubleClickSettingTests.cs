@@ -12,33 +12,74 @@ namespace WitchDrawer.App.Tests;
 public sealed class DesktopDoubleClickSettingTests
 {
     [Fact]
-    public async Task LoadAndToggle_PersistsDesktopDoubleClickSetting()
+    public async Task LegacyEnabledSetting_IsResetToDisabledOnceOnLoad()
     {
-        var root = Path.Combine(Path.GetTempPath(), "WitchDrawerTests", Guid.NewGuid().ToString("N"));
+        // 升级场景：数据库里残留旧版本（历史误触或调试）留下的 True，
+        // 且迁移版本键不存在。「双击桌面切换图标」会隐藏桌面图标、
+        // 误触代价高（用户会以为桌面文件消失），升级时一次性重置为关闭。
+        var root = CreateTempRoot();
         try
         {
-            var paths = new AppPaths(root);
-            var repository = new DrawerRepository(paths.DatabasePath);
-            var drawerService = new DrawerService(paths, repository);
-            await drawerService.InitializeAsync();
-            await drawerService.SetSettingAsync(MainViewModel.DesktopDoubleClickSettingKey, bool.TrueString);
-            var logger = new RecordingLogger();
-            var launcher = new NoOpFileLauncher();
-            var visualStyleStore = new BoxVisualStyleStore(drawerService, logger);
-            var viewModel = new MainViewModel(
-                drawerService,
-                new TodoService(repository),
-                launcher,
-                logger,
-                new QuickPanelViewModel(drawerService, launcher, logger, visualStyleStore),
-                new UpdateService(logger),
-                visualStyleStore,
-                new BoxPositionLockStateStore(drawerService, logger),
-                paths,
-                new DataStorageMigrationService(
-                    paths,
-                    repository,
-                    new StorageLocationStore(Path.Combine(root, "storage-location.json"))));
+            var (viewModel, drawerService) = await CreateViewModelAsync(root);
+            await drawerService.SetSettingAsync(
+                MainViewModel.DesktopDoubleClickSettingKey,
+                bool.TrueString);
+
+            await viewModel.LoadAsync();
+
+            Assert.False(viewModel.IsDesktopDoubleClickEnabled);
+            Assert.Equal(
+                bool.FalseString,
+                await drawerService.GetSettingAsync(MainViewModel.DesktopDoubleClickSettingKey));
+            Assert.Equal(
+                MainViewModel.DesktopDoubleClickDefaultVersion,
+                await drawerService.GetSettingAsync(
+                    MainViewModel.DesktopDoubleClickDefaultVersionSettingKey));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task EnabledSetting_AfterMigration_IsPreservedOnLoad()
+    {
+        // 迁移完成后用户主动开启属于显式偏好，必须保留：不能被再次重置。
+        var root = CreateTempRoot();
+        try
+        {
+            var (viewModel, drawerService) = await CreateViewModelAsync(root);
+            await drawerService.SetSettingAsync(
+                MainViewModel.DesktopDoubleClickDefaultVersionSettingKey,
+                MainViewModel.DesktopDoubleClickDefaultVersion);
+            await drawerService.SetSettingAsync(
+                MainViewModel.DesktopDoubleClickSettingKey,
+                bool.TrueString);
+
+            await viewModel.LoadAsync();
+
+            Assert.True(viewModel.IsDesktopDoubleClickEnabled);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task LoadAndToggle_PersistsDesktopDoubleClickSetting()
+    {
+        var root = CreateTempRoot();
+        try
+        {
+            var (viewModel, drawerService) = await CreateViewModelAsync(root);
+            await drawerService.SetSettingAsync(
+                MainViewModel.DesktopDoubleClickDefaultVersionSettingKey,
+                MainViewModel.DesktopDoubleClickDefaultVersion);
+            await drawerService.SetSettingAsync(
+                MainViewModel.DesktopDoubleClickSettingKey,
+                bool.TrueString);
 
             await viewModel.LoadAsync();
             Assert.True(viewModel.IsDesktopDoubleClickEnabled);
@@ -52,11 +93,38 @@ public sealed class DesktopDoubleClickSettingTests
         }
         finally
         {
-            if (Directory.Exists(root))
-            {
-                Directory.Delete(root, recursive: true);
-            }
+            Directory.Delete(root, recursive: true);
         }
+    }
+
+    private static string CreateTempRoot() =>
+        Path.Combine(Path.GetTempPath(), "WitchDrawerTests", Guid.NewGuid().ToString("N"));
+
+    private static async Task<(MainViewModel ViewModel, DrawerService DrawerService)>
+        CreateViewModelAsync(string root)
+    {
+        var paths = new AppPaths(root);
+        var repository = new DrawerRepository(paths.DatabasePath);
+        var drawerService = new DrawerService(paths, repository);
+        await drawerService.InitializeAsync();
+        var logger = new RecordingLogger();
+        var launcher = new NoOpFileLauncher();
+        var visualStyleStore = new BoxVisualStyleStore(drawerService, logger);
+        var viewModel = new MainViewModel(
+            drawerService,
+            new TodoService(repository),
+            launcher,
+            logger,
+            new QuickPanelViewModel(drawerService, launcher, logger, visualStyleStore),
+            new UpdateService(logger),
+            visualStyleStore,
+            new BoxPositionLockStateStore(drawerService, logger),
+            paths,
+            new DataStorageMigrationService(
+                paths,
+                repository,
+                new StorageLocationStore(Path.Combine(root, "storage-location.json"))));
+        return (viewModel, drawerService);
     }
 
     private sealed class NoOpFileLauncher : IFileLauncher
