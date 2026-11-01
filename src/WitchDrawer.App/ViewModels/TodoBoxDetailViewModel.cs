@@ -110,7 +110,7 @@ public sealed class TodoBoxDetailViewModel : ObservableObject
 
     public bool HasCompletedTodos => CompletedCount > 0;
 
-    /// <summary>「每日循环」：当天全部勾选完成后，第二天打开时自动清除勾选。</summary>
+    /// <summary>「每日循环」：当天勾选过（部分完成也算），第二天打开时自动清除勾选。</summary>
     public bool IsDailyResetEnabled
     {
         get => _isDailyResetEnabled;
@@ -132,7 +132,7 @@ public sealed class TodoBoxDetailViewModel : ObservableObject
     }
 
     public string DailyResetHint => IsDailyResetEnabled
-        ? "每天全部完成后，次日自动重置勾选"
+        ? "当天勾选过，次日自动重置勾选"
         : "开启后每天重复这批任务";
 
     public async Task LoadAsync(Guid? boxId)

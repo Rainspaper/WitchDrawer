@@ -167,7 +167,7 @@ public sealed class TodoBoxDetailViewModelTests
         await viewModel.SetDailyResetAsync(enabled: true);
 
         Assert.True(viewModel.IsDailyResetEnabled);
-        Assert.Equal("每天全部完成后，次日自动重置勾选", viewModel.DailyResetHint);
+        Assert.Equal("当天勾选过，次日自动重置勾选", viewModel.DailyResetHint);
         Assert.True(await workspace.TodoService.GetDailyResetAsync(workspace.TodoBox.Id));
 
         // 重新载入后设置仍然生效。

@@ -162,7 +162,7 @@ public sealed class TodoService
     }
 
     /// <summary>
-    /// 开关「每日循环」。开启时若当前已全部勾选完成，就把「完成日」记成今天，
+    /// 开关「每日循环」。开启时若当前已有勾选（部分完成也算），就把「完成日」记成今天，
     /// 这样第二天才会自动重置（今天完成的任务当天不会被动到）。
     /// </summary>
     public async Task SetDailyResetAsync(
@@ -187,7 +187,7 @@ public sealed class TodoService
     }
 
     /// <summary>
-    /// 执行一次每日循环检查：「上次全部完成」的日期早于今天，就把勾选全部清空。
+    /// 执行一次每日循环检查：「当天已有勾选」的日期早于今天，就把勾选全部清空。
     /// 返回被清除勾选的事项数量。
     /// </summary>
     public async Task<int> ApplyDailyResetAsync(
@@ -201,28 +201,41 @@ public sealed class TodoService
         }
 
         var todos = await _repository.GetTodosAsync(boxId, cancellationToken);
-        if (todos.Count == 0 || !todos.All(todo => todo.IsCompleted))
+        if (todos.Count == 0)
         {
             await ClearDailyResetMarkAsync(boxId, cancellationToken);
             return 0;
         }
 
+        var anyCompleted = todos.Any(todo => todo.IsCompleted);
         var today = FormatDay(now);
         var completedOn = await _repository.GetSettingAsync(
             GetDailyResetCompletedOnKey(boxId),
             cancellationToken);
         if (string.IsNullOrEmpty(completedOn))
         {
-            // 刚开启每日循环、或标记丢了：从今天开始算，明天再重置。
-            await _repository.SetSettingAsync(
-                GetDailyResetCompletedOnKey(boxId),
-                today,
-                cancellationToken);
+            // 刚开启每日循环、或标记丢了：把今天当成本轮起点，明天再重置。
+            if (anyCompleted)
+            {
+                await _repository.SetSettingAsync(
+                    GetDailyResetCompletedOnKey(boxId),
+                    today,
+                    cancellationToken);
+            }
+
             return 0;
         }
 
         if (string.CompareOrdinal(completedOn, today) >= 0)
         {
+            // 今天已经有勾选记录：当天不动，等跨天后再重置。
+            return 0;
+        }
+
+        if (!anyCompleted)
+        {
+            // 昨天有勾选过、但之后被手动取消了：没有需要重置的内容。
+            await ClearDailyResetMarkAsync(boxId, cancellationToken);
             return 0;
         }
 
@@ -276,8 +289,9 @@ public sealed class TodoService
     }
 
     /// <summary>
-    /// 维护「完成日」标记：只有「开启每日循环 + 当前全部勾选完成」时才记今天，
-    /// 其它情况一律清掉，避免部分完成的任务第二天被误重置。
+    /// <summary>
+    /// 维护「本轮已完成日」标记：开启每日循环且当前有任意勾选时记今天（部分完成也算过当天），
+    /// 完全没有勾选则清掉，避免第二天拿旧标记误判。
     /// </summary>
     private async Task RefreshDailyResetMarkAsync(
         Guid boxId,
@@ -292,7 +306,7 @@ public sealed class TodoService
         }
 
         var todos = await _repository.GetTodosAsync(boxId, cancellationToken);
-        if (todos.Count == 0 || !todos.All(todo => todo.IsCompleted))
+        if (todos.Count == 0 || !todos.Any(todo => todo.IsCompleted))
         {
             await ClearDailyResetMarkAsync(boxId, cancellationToken);
             return;

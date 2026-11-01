@@ -413,7 +413,7 @@
                     <StackPanel Grid.Column="1"
                                 Orientation="Horizontal"
                                 VerticalAlignment="Center"
-                                ToolTip="每日循环：当天全部勾选完成后，第二天打开时自动重置勾选">
+                                ToolTip="每日循环：当天勾选过（部分完成也算），第二天打开时自动重置勾选">
                         <TextBlock Text="每日循环"
                                    Margin="0,0,6,0"
                                    Foreground="{DynamicResource TextMutedBrush}"

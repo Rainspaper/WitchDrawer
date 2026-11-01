@@ -184,7 +184,7 @@ public sealed class TodoServiceTests
     }
 
     [Fact]
-    public async Task DailyReset_DoesNotResetPartiallyCompletedList()
+    public async Task DailyReset_PartiallyCompletedListStillCountsAsDoneForTheDay()
     {
         using var workspace = await TodoWorkspace.CreateAsync();
         var today = DateTimeOffset.Now;
@@ -193,12 +193,33 @@ public sealed class TodoServiceTests
         await workspace.Service.SetDailyResetAsync(workspace.BoxId, enabled: true, today);
         await workspace.Service.SetCompletedAsync(first.Id, isCompleted: true);
 
-        var nextDay = await workspace.Service.ApplyDailyResetAsync(workspace.BoxId, today.AddDays(1));
+        // 同一天里只勾了一部分：不重置。
+        var sameDay = await workspace.Service.ApplyDailyResetAsync(workspace.BoxId, today);
+        Assert.Equal(0, sameDay);
 
-        Assert.Equal(0, nextDay);
+        // 跨天后：部分完成也算过完当天，勾选要被清空（未勾选的保持未完成）。
+        var nextDay = await workspace.Service.ApplyDailyResetAsync(workspace.BoxId, today.AddDays(1));
+        Assert.Equal(1, nextDay);
         var todos = await workspace.Service.GetTodosAsync(workspace.BoxId);
-        Assert.True(todos.Single(todo => todo.Id == first.Id).IsCompleted);
+        Assert.All(todos, todo => Assert.False(todo.IsCompleted));
+        Assert.Equal(2, todos.Count);
     }
+
+    [Fact]
+    public async Task DailyReset_BoxWithoutAnyCompletionIsLeftAlone()
+    {
+        using var workspace = await TodoWorkspace.CreateAsync();
+        var today = DateTimeOffset.Now;
+        await workspace.Service.AddTodoAsync(workspace.BoxId, "never checked");
+        await workspace.Service.SetDailyResetAsync(workspace.BoxId, enabled: true, today);
+
+        var resetCount = await workspace.Service.ApplyDailyResetAsync(workspace.BoxId, today.AddDays(1));
+
+        Assert.Equal(0, resetCount);
+        var todo = Assert.Single(await workspace.Service.GetTodosAsync(workspace.BoxId));
+        Assert.False(todo.IsCompleted);
+    }
+
 
     [Fact]
     public async Task DailyReset_DisabledBoxIsNeverReset()

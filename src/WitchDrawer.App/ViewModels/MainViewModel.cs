@@ -461,7 +461,7 @@ public sealed class MainViewModel : ObservableObject
     public event EventHandler<Guid>? TodoDailyResetApplied;
 
     /// <summary>
-    /// 每日循环：把所有开启该设置的待办盒按「上次全部完成不是今天」清掉勾选。
+    /// 每日循环：把所有开启该设置的待办盒按「当天已有勾选且不是今天」清掉勾选（部分完成也算过完当天）。
     /// 主窗口加载时调一次，跨过午夜时由 MainWindow 的定时器再调一次。
     /// </summary>
     public async Task ApplyTodoDailyResetsAsync()
