@@ -143,6 +143,7 @@ public partial class App : Application
                 drawerService,
                 quickPanelHotKeySettings);
             logger.Info($"[perf] database initialized in {dataInitWatch.ElapsedMilliseconds} ms.");
+            await RestoreLegacyHiddenDesktopIconsAsync(drawerService, logger);
             AppThemeManager.Apply(await LoadSavedThemeAsync(drawerService));
 
             var quickPanelViewModel = new QuickPanelViewModel(
@@ -366,6 +367,41 @@ public partial class App : Application
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
             Shutdown(-1);
+        }
+    }
+
+    /// <summary>
+    /// 一次性恢复旧版「双击桌面切换」可能误设并跨重启留存的桌面图标隐藏状态。
+    /// 版本键保证只执行一次：此后用户/系统对「隐藏桌面图标」的显式设置都会被尊重。
+    /// 恢复失败不阻断启动，且版本键不推进（下次启动重试）。
+    /// </summary>
+    private static async Task RestoreLegacyHiddenDesktopIconsAsync(
+        DrawerService drawerService,
+        IAppLogger logger)
+    {
+        const string restoreVersionSettingKey = "DesktopIconsHiddenRestoreVersion";
+        const string restoreVersion = "1";
+
+        try
+        {
+            if (string.Equals(
+                    await drawerService.GetSettingAsync(restoreVersionSettingKey),
+                    restoreVersion,
+                    StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            if (await DesktopIconVisibility.RestoreIfHiddenAsync())
+            {
+                logger.Info("Restored hidden desktop icons (legacy double-click toggle residue).");
+            }
+
+            await drawerService.SetSettingAsync(restoreVersionSettingKey, restoreVersion);
+        }
+        catch (Exception exception)
+        {
+            logger.Error(exception, "Failed to restore hidden desktop icons.");
         }
     }
 

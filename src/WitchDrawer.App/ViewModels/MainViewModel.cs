@@ -26,7 +26,7 @@ public sealed class MainViewModel : ObservableObject
     internal const string BoxCornerRadiusSettingKey = "BoxCornerRadius";
     internal const string DesktopDoubleClickSettingKey = "DesktopDoubleClickToggle";
     internal const string DesktopDoubleClickDefaultVersionSettingKey = "DesktopDoubleClickDefaultVersion";
-    internal const string DesktopDoubleClickDefaultVersion = "1";
+    internal const string DesktopDoubleClickDefaultVersion = "2";
     internal const string AboutPageShownSettingKey = "AboutPageShown";
     private const string StartupRegistryKeyName = "WitchDrawer";
 
@@ -1329,10 +1329,11 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 「双击桌面切换图标」默认关闭迁移（一次性）：该功能误触会隐藏全部桌面
-    /// 图标（用户会以为桌面文件消失），且历史存量 True 在手动启动的实例上仍会
-    /// 生效（silent 自启实例已在 App 层禁用）。升级时把存量 True 重置为关闭，
-    /// 并写入版本键；此后用户主动开启的选择不会再被重置。
+    /// 「双击桌面切换图标」默认关闭迁移：该功能误触会隐藏全部桌面图标（用户会以为
+    /// 桌面文件消失），且存量 True 在手动启动的实例上仍会生效（silent 自启实例已在
+    /// App 层禁用）。v1 重置首轮存量 True；v2 覆盖「v1 之后又被重新开启」的情形再
+    /// 重置一次（被隐藏图标的恢复在 App 启动层另行执行）。写入版本键后，之后用户
+    /// 主动开启的选择不会再被重置。
     /// </summary>
     private async Task ApplyDesktopDoubleClickDefaultOffMigrationAsync()
     {

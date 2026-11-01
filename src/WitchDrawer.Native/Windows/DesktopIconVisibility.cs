@@ -55,6 +55,31 @@ public static class DesktopIconVisibility
             NotifyDesktopIconSettingChanged);
     }
 
+    /// <summary>
+    /// 一次性恢复入口：桌面图标处于隐藏状态时恢复为显示（清理旧版「双击桌面切换」
+    /// 误触发并跨重启留存的隐藏状态）。返回是否执行了恢复。
+    /// </summary>
+    public static bool RestoreIfHidden() => RunRestoreIfHidden(IsHidden, SetHidden);
+
+    public static Task<bool> RestoreIfHiddenAsync(CancellationToken cancellationToken = default) =>
+        Task.Run(RestoreIfHidden, cancellationToken);
+
+    internal static bool RunRestoreIfHidden(
+        Func<bool> isHidden,
+        Action<bool> setHidden)
+    {
+        ArgumentNullException.ThrowIfNull(isHidden);
+        ArgumentNullException.ThrowIfNull(setHidden);
+
+        if (!isHidden())
+        {
+            return false;
+        }
+
+        setHidden(false);
+        return true;
+    }
+
     internal static void ApplyHiddenState(
         bool hidden,
         Action<bool> writeRegistry,

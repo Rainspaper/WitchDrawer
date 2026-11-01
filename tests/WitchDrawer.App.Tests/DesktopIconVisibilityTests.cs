@@ -67,6 +67,27 @@ public sealed class DesktopIconVisibilityTests
         await operation.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    [Fact]
+    public void RunRestoreIfHidden_RestoresOnlyWhenCurrentlyHidden()
+    {
+        var setValues = new List<bool>();
+
+        var restored = DesktopIconVisibility.RunRestoreIfHidden(
+            isHidden: () => true,
+            setHidden: value => setValues.Add(value));
+
+        Assert.True(restored);
+        Assert.Equal([false], setValues);
+
+        setValues.Clear();
+        restored = DesktopIconVisibility.RunRestoreIfHidden(
+            isHidden: () => false,
+            setHidden: value => setValues.Add(value));
+
+        Assert.False(restored);
+        Assert.Empty(setValues);
+    }
+
     [Theory]
     [InlineData(null, false)]
     [InlineData(0, false)]

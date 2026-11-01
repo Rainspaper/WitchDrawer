@@ -68,6 +68,39 @@ public sealed class DesktopDoubleClickSettingTests
     }
 
     [Fact]
+    public async Task ReEnabledSetting_IsResetOnceOnUpgradeFromV1()
+    {
+        // v1 迁移（或更早）之后用户又把「双击切换」开了回来：升级到 v2 时
+        // 再重置一次——之后版本键到位，不再打扰用户的选择。
+        var root = CreateTempRoot();
+        try
+        {
+            var (viewModel, drawerService) = await CreateViewModelAsync(root);
+            await drawerService.SetSettingAsync(
+                MainViewModel.DesktopDoubleClickDefaultVersionSettingKey,
+                "1");
+            await drawerService.SetSettingAsync(
+                MainViewModel.DesktopDoubleClickSettingKey,
+                bool.TrueString);
+
+            await viewModel.LoadAsync();
+
+            Assert.False(viewModel.IsDesktopDoubleClickEnabled);
+            Assert.Equal(
+                bool.FalseString,
+                await drawerService.GetSettingAsync(MainViewModel.DesktopDoubleClickSettingKey));
+            Assert.Equal(
+                MainViewModel.DesktopDoubleClickDefaultVersion,
+                await drawerService.GetSettingAsync(
+                    MainViewModel.DesktopDoubleClickDefaultVersionSettingKey));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task LoadAndToggle_PersistsDesktopDoubleClickSetting()
     {
         var root = CreateTempRoot();
