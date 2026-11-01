@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
@@ -2473,12 +2473,45 @@ public sealed class DesktopBoxManager
         _horizontalGuide?.Hide();
     }
 
+    private void ShowVerticalGuide(IReadOnlyList<SnapGuideLine> guides)
+    {
+        if (_verticalGuide == null)
+        {
+            _verticalGuide = new GuideLineWindow(true);
+        }
+        if (!_verticalGuide.IsVisible)
+        {
+            _verticalGuide.Show();
+        }
+
+        _verticalGuide.UpdateLines(guides
+            .Select(line => (line.Position, line.Start, line.Position, line.End))
+            .ToArray());
+    }
+
+    private void ShowHorizontalGuide(IReadOnlyList<SnapGuideLine> guides)
+    {
+        if (_horizontalGuide == null)
+        {
+            _horizontalGuide = new GuideLineWindow(false);
+        }
+        if (!_horizontalGuide.IsVisible)
+        {
+            _horizontalGuide.Show();
+        }
+
+        _horizontalGuide.UpdateLines(guides
+            .Select(line => (line.Start, line.Position, line.End, line.Position))
+            .ToArray());
+    }
+
+
     private void PerformSnappingAndAlignment(DesktopBoxWindow draggedWindow, bool applySnap = true)
     {
         var dpi = draggedWindow.GetDpiScale();
-        var snapThreshold = 10.0 * dpi.DpiScaleX;
-        var visualGap = 8.0 * dpi.DpiScaleX;
-        var tightGap = 1.0 * dpi.DpiScaleX;
+        var scale = Math.Max(0.1, dpi.DpiScaleX);
+        var threshold = DesktopBoxSnapCalculator.DefaultThresholdDip * scale;
+        var gap = DesktopBoxSnapCalculator.DefaultGapDip * scale;
 
         var boundsA = draggedWindow.GetVisibleBoundsPixels();
         if (boundsA.IsEmpty)
@@ -2486,29 +2519,8 @@ public sealed class DesktopBoxManager
             HideGuides();
             return;
         }
-        double currentLeft = boundsA.Left;
-        double currentTop = boundsA.Top;
-        double width = boundsA.Width;
-        double height = boundsA.Height;
-        double rightA = boundsA.Right;
-        double bottomA = boundsA.Bottom;
-        double hCenterA = currentLeft + width / 2.0;
-        double vCenterA = currentTop + height / 2.0;
-        double? bestSnappedVisibleLeft = null;
-        int bestLeftPriority = int.MaxValue;
-        double bestLeftDistance = double.MaxValue;
-        double? bestSnappedVisibleTop = null;
-        int bestTopPriority = int.MaxValue;
-        double bestTopDistance = double.MaxValue;
 
-        var verticalGuideXs = new List<double>();
-        double verticalGuideYMin = double.MaxValue;
-        double verticalGuideYMax = double.MinValue;
-
-        var horizontalGuideYs = new List<double>();
-        double horizontalGuideXMin = double.MaxValue;
-        double horizontalGuideXMax = double.MinValue;
-
+        var others = new List<Rect>(_windows.Count);
         foreach (var pair in _windows)
         {
             var otherWindow = pair.Value;
@@ -2522,124 +2534,49 @@ public sealed class DesktopBoxManager
             {
                 continue;
             }
-            double leftB = boundsB.Left;
-            double topB = boundsB.Top;
-            double widthB = boundsB.Width;
-            double heightB = boundsB.Height;
-            double rightB = boundsB.Right;
-            double bottomB = boundsB.Bottom;
-            double hCenterB = leftB + widthB / 2.0;
-            double vCenterB = topB + heightB / 2.0;
 
-            // 1. Vertical snapping - collect every matching guide line.
-            if (Math.Abs(currentLeft - leftB) <= snapThreshold)
-            {
-                AddVerticalGuide(verticalGuideXs, ref verticalGuideYMin, ref verticalGuideYMax, leftB, currentTop, topB, bottomA, bottomB);
-            }
-            if (Math.Abs(rightA - rightB) <= snapThreshold)
-            {
-                AddVerticalGuide(verticalGuideXs, ref verticalGuideYMin, ref verticalGuideYMax, rightB, currentTop, topB, bottomA, bottomB);
-            }
-            if (Math.Abs(currentLeft - (rightB + tightGap)) <= snapThreshold)
-            {
-                AddVerticalGuide(verticalGuideXs, ref verticalGuideYMin, ref verticalGuideYMax, rightB + tightGap / 2.0, currentTop, topB, bottomA, bottomB);
-            }
-            if (Math.Abs(rightA - (leftB - tightGap)) <= snapThreshold)
-            {
-                AddVerticalGuide(verticalGuideXs, ref verticalGuideYMin, ref verticalGuideYMax, leftB - tightGap / 2.0, currentTop, topB, bottomA, bottomB);
-            }
-            if (Math.Abs(hCenterA - hCenterB) <= snapThreshold)
-            {
-                AddVerticalGuide(verticalGuideXs, ref verticalGuideYMin, ref verticalGuideYMax, hCenterB, currentTop, topB, bottomA, bottomB);
-            }
-
-            // 1b. Vertical snap target (nearest candidate wins, priority breaks ties).
-            if (Math.Abs(currentLeft - leftB) <= snapThreshold)
-            {
-                TryUpdateSnapTarget(ref bestSnappedVisibleLeft, ref bestLeftPriority, ref bestLeftDistance, leftB, 1, currentLeft);
-            }
-            if (Math.Abs(rightA - rightB) <= snapThreshold)
-            {
-                TryUpdateSnapTarget(ref bestSnappedVisibleLeft, ref bestLeftPriority, ref bestLeftDistance, rightB - width, 2, currentLeft);
-            }
-            if (Math.Abs(currentLeft - (rightB + tightGap)) <= snapThreshold)
-            {
-                TryUpdateSnapTarget(ref bestSnappedVisibleLeft, ref bestLeftPriority, ref bestLeftDistance, rightB + tightGap, 3, currentLeft);
-            }
-            if (Math.Abs(rightA - (leftB - tightGap)) <= snapThreshold)
-            {
-                TryUpdateSnapTarget(ref bestSnappedVisibleLeft, ref bestLeftPriority, ref bestLeftDistance, leftB - tightGap - width, 4, currentLeft);
-            }
-            if (Math.Abs(hCenterA - hCenterB) <= snapThreshold)
-            {
-                TryUpdateSnapTarget(ref bestSnappedVisibleLeft, ref bestLeftPriority, ref bestLeftDistance, hCenterB - width / 2.0, 5, currentLeft);
-            }
-            // 2. Horizontal snapping - collect every matching guide line.
-            if (Math.Abs(currentTop - topB) <= snapThreshold)
-            {
-                AddHorizontalGuide(horizontalGuideYs, ref horizontalGuideXMin, ref horizontalGuideXMax, topB, currentLeft, leftB, rightA, rightB);
-            }
-            if (Math.Abs(bottomA - bottomB) <= snapThreshold)
-            {
-                AddHorizontalGuide(horizontalGuideYs, ref horizontalGuideXMin, ref horizontalGuideXMax, bottomB, currentLeft, leftB, rightA, rightB);
-            }
-            if (Math.Abs(currentTop - (bottomB + visualGap)) <= snapThreshold)
-            {
-                AddHorizontalGuide(horizontalGuideYs, ref horizontalGuideXMin, ref horizontalGuideXMax, bottomB + visualGap / 2.0, currentLeft, leftB, rightA, rightB);
-            }
-            if (Math.Abs(bottomA - (topB - visualGap)) <= snapThreshold)
-            {
-                AddHorizontalGuide(horizontalGuideYs, ref horizontalGuideXMin, ref horizontalGuideXMax, topB - visualGap / 2.0, currentLeft, leftB, rightA, rightB);
-            }
-            if (Math.Abs(vCenterA - vCenterB) <= snapThreshold)
-            {
-                AddHorizontalGuide(horizontalGuideYs, ref horizontalGuideXMin, ref horizontalGuideXMax, vCenterB, currentLeft, leftB, rightA, rightB);
-            }
-
-            // 2b. Horizontal snap target (nearest candidate wins, priority breaks ties).
-            if (Math.Abs(currentTop - topB) <= snapThreshold)
-            {
-                TryUpdateSnapTarget(ref bestSnappedVisibleTop, ref bestTopPriority, ref bestTopDistance, topB, 1, currentTop);
-            }
-            if (Math.Abs(bottomA - bottomB) <= snapThreshold)
-            {
-                TryUpdateSnapTarget(ref bestSnappedVisibleTop, ref bestTopPriority, ref bestTopDistance, bottomB - height, 2, currentTop);
-            }
-            if (Math.Abs(currentTop - (bottomB + visualGap)) <= snapThreshold)
-            {
-                TryUpdateSnapTarget(ref bestSnappedVisibleTop, ref bestTopPriority, ref bestTopDistance, bottomB + visualGap, 3, currentTop);
-            }
-            if (Math.Abs(bottomA - (topB - visualGap)) <= snapThreshold)
-            {
-                TryUpdateSnapTarget(ref bestSnappedVisibleTop, ref bestTopPriority, ref bestTopDistance, topB - visualGap - height, 4, currentTop);
-            }
-            if (Math.Abs(vCenterA - vCenterB) <= snapThreshold)
-            {
-                TryUpdateSnapTarget(ref bestSnappedVisibleTop, ref bestTopPriority, ref bestTopDistance, vCenterB - height / 2.0, 5, currentTop);
-            }
+            others.Add(boundsB);
         }
+
+        // 吸附/对齐是纯计算（见 DesktopBoxSnapCalculator）：这里只负责取边界、落位、画线。
+        // 候选包含：其它盒子的对边对齐、零间距/留缝紧贴、中心线，以及当前工作区四边与中心。
+        var result = DesktopBoxSnapCalculator.Compute(
+            boundsA.Left,
+            boundsA.Top,
+            boundsA.Width,
+            boundsA.Height,
+            others,
+            draggedWindow.GetWorkAreaPixels(),
+            threshold,
+            gap);
+
+        if (applySnap && result.HasSnap)
+        {
+            draggedWindow.MoveToVisibleOriginPixels(
+                result.SnappedLeft ?? boundsA.Left,
+                result.SnappedTop ?? boundsA.Top);
+        }
+
+        // 松手落位那一次（applySnap=true）由调用方立即 HideGuides：
+        // 这里再画一遍会在收线前闪一帧虚线，所以只在拖动过程中（applySnap=false）画线。
         if (applySnap)
         {
-            if (bestSnappedVisibleLeft.HasValue || bestSnappedVisibleTop.HasValue)
-            {
-                draggedWindow.MoveToVisibleOriginPixels(
-                    bestSnappedVisibleLeft ?? currentLeft,
-                    bestSnappedVisibleTop ?? currentTop);
-            }
+            HideGuides();
+            return;
         }
 
-        if (verticalGuideXs.Count > 0 && verticalGuideYMax > verticalGuideYMin)
+        if (result.VerticalGuides.Count > 0)
         {
-            ShowVerticalGuide(verticalGuideXs, verticalGuideYMin, verticalGuideYMax - verticalGuideYMin);
+            ShowVerticalGuide(result.VerticalGuides);
         }
         else
         {
             HideVerticalGuide();
         }
 
-        if (horizontalGuideYs.Count > 0 && horizontalGuideXMax > horizontalGuideXMin)
+        if (result.HorizontalGuides.Count > 0)
         {
-            ShowHorizontalGuide(horizontalGuideYs, horizontalGuideXMin, horizontalGuideXMax - horizontalGuideXMin);
+            ShowHorizontalGuide(result.HorizontalGuides);
         }
         else
         {
@@ -2648,24 +2585,7 @@ public sealed class DesktopBoxManager
     }
 
 
-    private static void TryUpdateSnapTarget(
-        ref double? bestTarget,
-        ref int bestPriority,
-        ref double bestDistance,
-        double target,
-        int priority,
-        double current)
-    {
-        var distance = Math.Abs(target - current);
-        if (!bestTarget.HasValue
-            || distance < bestDistance
-            || (distance == bestDistance && priority < bestPriority))
-        {
-            bestTarget = target;
-            bestPriority = priority;
-            bestDistance = distance;
-        }
-    }
+
     private static void AddVerticalGuide(
         List<double> guideXs,
         ref double yMin,
@@ -2701,5 +2621,4 @@ public sealed class DesktopBoxManager
         xMin = Math.Min(xMin, Math.Min(currentLeft, leftB));
         xMax = Math.Max(xMax, Math.Max(rightA, rightB));
     }
-
 }
