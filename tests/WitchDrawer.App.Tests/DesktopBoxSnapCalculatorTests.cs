@@ -196,6 +196,55 @@ public sealed class DesktopBoxSnapCalculatorTests
     }
 
     [Theory]
+    // 左侧越界：无论越界多少，左缘贴到工作区左边缘
+    [InlineData(-6.0, 400.0, 0.0, null)]
+    [InlineData(-120.0, 400.0, 0.0, null)]
+    // 右侧越界：右缘贴到工作区右边缘（left = 1920 - 200）
+    [InlineData(1730.0, 400.0, 1720.0, null)]
+    // 上方越界
+    [InlineData(400.0, -5.0, null, 0.0)]
+    // 下方越界（top = 1040 - 150）
+    [InlineData(400.0, 899.0, null, 890.0)]
+    public void BoxOutsideWorkArea_IsPushedBackToTheScreenEdge(
+        double left,
+        double top,
+        double? expectedLeft,
+        double? expectedTop)
+    {
+        var result = Compute(new Rect(left, top, 200, 150));
+
+        Assert.Equal(expectedLeft, result.SnappedLeft);
+        Assert.Equal(expectedTop, result.SnappedTop);
+    }
+
+    [Fact]
+    public void BoxOutsideWorkArea_StillPulledInWhenFarBeyondTheThreshold()
+    {
+        // 越界很远（超过吸附阈值 10）也必须被拉回来：这是硬约束。
+        var dragged = new Rect(-500, 400, 200, 150);
+
+        var result = Compute(dragged);
+
+        Assert.Equal(0, result.SnappedLeft!.Value, 3);
+        // 归边时也画一条贴着屏幕边缘的虚线
+        var guide = Assert.Single(result.VerticalGuides);
+        Assert.Equal(0, guide.Position, 3);
+    }
+
+    [Fact]
+    public void BoxInsideWorkArea_StaysUnsappedWhenFarFromEverything()
+    {
+        var dragged = new Rect(600, 400, 200, 150);
+
+        var result = Compute(dragged);
+
+        Assert.Null(result.SnappedLeft);
+        Assert.Null(result.SnappedTop);
+        Assert.Empty(result.VerticalGuides);
+        Assert.Empty(result.HorizontalGuides);
+    }
+
+    [Theory]
     [InlineData(0, 100, 100, 200, 0)]
     [InlineData(100, 300, 300, 400, 0)]
     [InlineData(0, 100, 200, 300, 100)]

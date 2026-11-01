@@ -46,6 +46,8 @@ internal static class DesktopBoxSnapCalculator
     /// <summary>上下/左右并排时默认留出的间距（DIP）。</summary>
     internal const double DefaultGapDip = 8.0;
 
+    /// <summary>盒子跑到工作区外面时的强制归边（优先级最高、不受阈值限制）。</summary>
+    private const int PriorityOutOfBounds = 0;
     private const int PriorityEdgeAlign = 1;
     private const int PriorityEdgeAlignOpposite = 2;
     private const int PriorityFlush = 3;
@@ -177,6 +179,27 @@ internal static class DesktopBoxSnapCalculator
         var snappedLeft = SelectBestTarget(horizontalCandidates, left, threshold);
         var snappedTop = SelectBestTarget(verticalCandidates, top, threshold);
 
+        // 盒子有任何一部分被拖到工作区外面时，强制把它的边缘对齐到屏幕边缘
+        // （硬约束：不受吸附阈值限制，越界多少都拉回来贴边）。
+        var hasWorkArea = !workArea.IsEmpty && workArea.Width > 0 && workArea.Height > 0;
+        if (hasWorkArea && left < workArea.Left)
+        {
+            snappedLeft = workArea.Left;
+        }
+        else if (hasWorkArea && right > workArea.Right)
+        {
+            snappedLeft = workArea.Right - width;
+        }
+
+        if (hasWorkArea && top < workArea.Top)
+        {
+            snappedTop = workArea.Top;
+        }
+        else if (hasWorkArea && bottom > workArea.Bottom)
+        {
+            snappedTop = workArea.Bottom - height;
+        }
+
         var verticalGuides = BuildGuides(
             horizontalCandidates,
             snappedLeft,
@@ -187,6 +210,17 @@ internal static class DesktopBoxSnapCalculator
             snappedTop,
             left,
             left + width);
+
+        AddWorkAreaEdgeGuides(
+            snappedLeft,
+            snappedTop,
+            left,
+            top,
+            width,
+            height,
+            workArea,
+            verticalGuides,
+            horizontalGuides);
 
         return new DesktopBoxSnapResult(snappedLeft, snappedTop, verticalGuides, horizontalGuides);
     }
@@ -272,6 +306,33 @@ internal static class DesktopBoxSnapCalculator
         }
 
         return guides;
+    }
+
+    /// <summary>
+    /// 越界归边时补一条贴着工作区边缘的虚线（优先级最高的边界线）。
+    /// </summary>
+    private static void AddWorkAreaEdgeGuides(
+        double? snappedLeft,
+        double? snappedTop,
+        double left,
+        double top,
+        double width,
+        double height,
+        Rect workArea,
+        List<SnapGuideLine> verticalGuides,
+        List<SnapGuideLine> horizontalGuides)
+    {
+        if (snappedLeft is double newLeft
+            && (Math.Abs(newLeft - workArea.Left) < 0.5 || Math.Abs(newLeft + width - workArea.Right) < 0.5))
+        {
+            AddGuide(verticalGuides, newLeft, top, top + height);
+        }
+
+        if (snappedTop is double newTop
+            && (Math.Abs(newTop - workArea.Top) < 0.5 || Math.Abs(newTop + height - workArea.Bottom) < 0.5))
+        {
+            AddGuide(horizontalGuides, newTop, left, left + width);
+        }
     }
 
     private static void AddGuide(List<SnapGuideLine> guides, double position, double start, double end)
