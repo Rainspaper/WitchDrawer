@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.ComponentModel;
 using System.IO;
 using System.Windows;
@@ -8,6 +8,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using WitchDrawer.App.Infrastructure;
+using System.Windows.Threading;
 using WitchDrawer.App.ViewModels;
 using WitchDrawer.App.Views;
 using WitchDrawer.Core.Logging;
@@ -34,6 +35,7 @@ public partial class MainWindow : Window
     private bool _isCapturingHotKey;
     private bool _isApplyingHotKey;
     private HwndSource? _source;
+    private DispatcherTimer? _todoDailyResetTimer;
     private Point? _boxDragStart;
     private BoxViewModel? _boxDragSource;
     private ListBoxItem? _boxDropTarget;
@@ -80,6 +82,13 @@ public partial class MainWindow : Window
         _hotKeySettings = hotKeySettings;
         _quickPanelHotKey = quickPanelHotKey;
         InitializeComponent();
+        // 每日循环：主窗口常驻托盘时也要能跨过午夜自动重置勾选。
+        _todoDailyResetTimer = new DispatcherTimer(
+            TimeSpan.FromMinutes(5),
+            DispatcherPriority.Background,
+            OnTodoDailyResetTimerTick,
+            Dispatcher);
+        _todoDailyResetTimer.Start();
         UpdateHotKeyUi("点击按钮可修改");
         Loaded += OnLoaded;
         DpiChanged += OnDpiChanged;
@@ -158,6 +167,18 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void OnTodoDailyResetTimerTick(object? sender, EventArgs e)
+    {
+        try
+        {
+            await ViewModel.ApplyTodoDailyResetsAsync();
+        }
+        catch (Exception exception)
+        {
+            _logger.Error(exception, "Todo daily reset timer failed.");
+        }
+    }
+
     protected override void OnClosed(EventArgs e)
     {
         Loaded -= OnLoaded;
@@ -167,6 +188,7 @@ public partial class MainWindow : Window
         ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
         _source?.RemoveHook(WndProc);
         _hotKey?.Dispose();
+        _todoDailyResetTimer?.Stop();
         _windowClosed = true;
         if (_quickPanel.IsValueCreated)
         {

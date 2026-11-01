@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -457,12 +457,48 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>某个待办盒因「每日循环」自动清空了勾选（桌面盒子需要据此刷新）。</summary>
+    public event EventHandler<Guid>? TodoDailyResetApplied;
+
+    /// <summary>
+    /// 每日循环：把所有开启该设置的待办盒按「上次全部完成不是今天」清掉勾选。
+    /// 主窗口加载时调一次，跨过午夜时由 MainWindow 的定时器再调一次。
+    /// </summary>
+    public async Task ApplyTodoDailyResetsAsync()
+    {
+        IReadOnlyList<Guid> resetBoxIds;
+        try
+        {
+            resetBoxIds = await _todoService.ApplyDailyResetsAsync(DateTimeOffset.Now);
+        }
+        catch (Exception exception)
+        {
+            _logger.Error(exception, "Failed to apply todo daily resets.");
+            return;
+        }
+
+        foreach (var boxId in resetBoxIds)
+        {
+            _logger.Info($"Todo daily reset applied. BoxId={boxId:N}.");
+
+            // 主窗口中正在展示这个待办盒时，立刻刷新勾选状态。
+            if (TodoBoxDetail.BoxId == boxId)
+            {
+                await TodoBoxDetail.LoadAsync(boxId);
+            }
+
+            TodoDailyResetApplied?.Invoke(this, boxId);
+        }
+    }
+
     public async Task LoadAsync()
     {
         await RunBusyAsync(async () =>
         {
             var existingSelection = SelectedBox?.Id;
             var boxes = await _drawerService.GetBoxesAsync();
+
+            await ApplyTodoDailyResetsAsync();
             var presentedBoxes = await LoadBoxPresentationAsync(boxes);
 
             Boxes.Clear();

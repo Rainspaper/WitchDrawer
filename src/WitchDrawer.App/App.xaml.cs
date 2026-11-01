@@ -203,6 +203,12 @@ public partial class App : Application
                 await GuardRefreshAsync(() => _desktopBoxManager.RefreshAsync(), "RefreshAsync", logger);
             mainViewModel.ItemsChanged += async (_, eventArgs) =>
                 await GuardRefreshAsync(() => _desktopBoxManager.RefreshItemsAsync(eventArgs.BoxId), "RefreshItemsAsync", logger);
+            // 每日循环自动清空勾选后，桌面上的待办盒窗口要跟着刷新。
+            mainViewModel.TodoDailyResetApplied += async (_, boxId) =>
+                await GuardRefreshAsync(
+                    () => _desktopBoxManager.RefreshItemsAsync(boxId),
+                    "RefreshItemsAsync(todo daily reset)",
+                    logger);
             _desktopBoxManager.ItemsChanged += async (_, eventArgs) =>
                 await GuardRefreshAsync(
                     () => mainViewModel.ReloadItemsFromDesktopAsync(eventArgs.BoxId),

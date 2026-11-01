@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using WitchDrawer.App.Infrastructure;
 using WitchDrawer.App.ViewModels;
 using WitchDrawer.Core;
@@ -150,6 +150,59 @@ public sealed class TodoBoxDetailViewModelTests
         Assert.False(viewModel.IsSelectedTodoBox);
         Assert.True(viewModel.CanImportFiles);
         Assert.Null(viewModel.TodoBoxDetail.BoxId);
+    }
+
+    [Fact]
+    public async Task DailyReset_IsLoadedAndCanBeToggledPerBox()
+    {
+        using var workspace = await TodoWorkspace.CreateAsync();
+        var viewModel = new TodoBoxDetailViewModel(
+            workspace.TodoService,
+            new RecordingLogger());
+        await viewModel.LoadAsync(workspace.TodoBox.Id);
+
+        Assert.False(viewModel.IsDailyResetEnabled);
+        Assert.Equal("开启后每天重复这批任务", viewModel.DailyResetHint);
+
+        await viewModel.SetDailyResetAsync(enabled: true);
+
+        Assert.True(viewModel.IsDailyResetEnabled);
+        Assert.Equal("每天全部完成后，次日自动重置勾选", viewModel.DailyResetHint);
+        Assert.True(await workspace.TodoService.GetDailyResetAsync(workspace.TodoBox.Id));
+
+        // 重新载入后设置仍然生效。
+        var reloaded = new TodoBoxDetailViewModel(
+            workspace.TodoService,
+            new RecordingLogger());
+        await reloaded.LoadAsync(workspace.TodoBox.Id);
+        Assert.True(reloaded.IsDailyResetEnabled);
+    }
+
+    [Fact]
+    public async Task DailyReset_LoadAppliesPendingResetAndReportsStatus()
+    {
+        using var workspace = await TodoWorkspace.CreateAsync();
+        var yesterday = DateTimeOffset.Now.AddDays(-1);
+        var todo = await workspace.TodoService.AddTodoAsync(workspace.TodoBox.Id, "每天的任务");
+        await workspace.TodoService.SetDailyResetAsync(
+            workspace.TodoBox.Id,
+            enabled: true,
+            yesterday);
+        // 模拟「昨天全部完成」留下的标记：先完成、再写回昨天的完成日。
+        await workspace.TodoService.SetCompletedAsync(todo.Id, isCompleted: true);
+        await workspace.Repository.SetSettingAsync(
+            TodoService.GetDailyResetCompletedOnKey(workspace.TodoBox.Id),
+            yesterday.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+
+        var viewModel = new TodoBoxDetailViewModel(
+            workspace.TodoService,
+            new RecordingLogger());
+        await viewModel.LoadAsync(workspace.TodoBox.Id);
+
+        Assert.True(viewModel.IsDailyResetEnabled);
+        Assert.Single(viewModel.ActiveTodos);
+        Assert.Empty(viewModel.CompletedTodos);
+        Assert.Equal("已按每日循环重置 1 项", viewModel.StatusText);
     }
 
     private sealed class TodoWorkspace : IDisposable

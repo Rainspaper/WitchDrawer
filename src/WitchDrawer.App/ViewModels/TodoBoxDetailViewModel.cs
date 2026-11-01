@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -17,6 +17,8 @@ public sealed class TodoBoxDetailViewModel : ObservableObject
     private string _newTodoTitle = string.Empty;
     private string _statusText = "从一件小事开始";
     private bool _isBusy;
+    private bool _isDailyResetEnabled;
+    private bool _isApplyingDailyReset;
 
     public TodoBoxDetailViewModel(
         TodoService todoService,
@@ -108,6 +110,31 @@ public sealed class TodoBoxDetailViewModel : ObservableObject
 
     public bool HasCompletedTodos => CompletedCount > 0;
 
+    /// <summary>「每日循环」：当天全部勾选完成后，第二天打开时自动清除勾选。</summary>
+    public bool IsDailyResetEnabled
+    {
+        get => _isDailyResetEnabled;
+        set
+        {
+            if (!SetProperty(ref _isDailyResetEnabled, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(DailyResetHint));
+
+            // 界面绑定会直接写进来；真正落库走服务（guard 防止回写时重复提交）。
+            if (!_isApplyingDailyReset && _boxId is { } boxId)
+            {
+                _ = UpdateDailyResetSettingAsync(boxId, value);
+            }
+        }
+    }
+
+    public string DailyResetHint => IsDailyResetEnabled
+        ? "每天全部完成后，次日自动重置勾选"
+        : "开启后每天重复这批任务";
+
     public async Task LoadAsync(Guid? boxId)
     {
         _loadCts?.Cancel();
@@ -133,6 +160,26 @@ public sealed class TodoBoxDetailViewModel : ObservableObject
         IsBusy = true;
         try
         {
+            var resetCount = await _todoService.ApplyDailyResetAsync(
+                boxId.Value,
+                DateTimeOffset.Now,
+                cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!IsCurrentLoad(boxId.Value, version))
+            {
+                return;
+            }
+
+            var dailyResetEnabled = await _todoService.GetDailyResetAsync(
+                boxId.Value,
+                cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!IsCurrentLoad(boxId.Value, version))
+            {
+                return;
+            }
+
+            SetDailyResetEnabledSilently(dailyResetEnabled);
             var todos = await _todoService.GetTodosAsync(
                 boxId.Value,
                 cancellationToken);
@@ -143,9 +190,11 @@ public sealed class TodoBoxDetailViewModel : ObservableObject
             }
 
             ReplaceItems(todos.Select(todo => new TodoItemViewModel(todo)));
-            StatusText = IsEmpty
-                ? "从一件小事开始"
-                : $"{RemainingCount} 项待完成";
+            StatusText = resetCount > 0
+                ? $"已按每日循环重置 {resetCount} 项"
+                : IsEmpty
+                    ? "从一件小事开始"
+                    : $"{RemainingCount} 项待完成";
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -168,6 +217,49 @@ public sealed class TodoBoxDetailViewModel : ObservableObject
             {
                 IsBusy = false;
             }
+        }
+    }
+
+    /// <summary>供视图/测试直接开关每日循环（会等待写入完成）。</summary>
+    public async Task SetDailyResetAsync(bool enabled)
+    {
+        SetDailyResetEnabledSilently(enabled);
+        if (_boxId is { } boxId)
+        {
+            await UpdateDailyResetSettingAsync(boxId, enabled);
+        }
+    }
+
+    private void SetDailyResetEnabledSilently(bool enabled)
+    {
+        _isApplyingDailyReset = true;
+        try
+        {
+            IsDailyResetEnabled = enabled;
+        }
+        finally
+        {
+            _isApplyingDailyReset = false;
+        }
+    }
+
+    private async Task UpdateDailyResetSettingAsync(Guid boxId, bool enabled)
+    {
+        try
+        {
+            await _todoService.SetDailyResetAsync(boxId, enabled, DateTimeOffset.Now);
+            if (BoxId == boxId)
+            {
+                StatusText = enabled ? "已开启每日循环" : "已关闭每日循环";
+            }
+        }
+        catch (Exception exception)
+        {
+            _logger.Error(
+                exception,
+                $"Failed to update todo daily reset for box {boxId:N}.");
+            SetDailyResetEnabledSilently(!enabled);
+            StatusText = "每日循环设置保存失败";
         }
     }
 

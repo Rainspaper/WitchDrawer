@@ -1,4 +1,4 @@
-using WitchDrawer.Core;
+﻿using WitchDrawer.Core;
 using WitchDrawer.Core.Models;
 using WitchDrawer.Core.Services;
 using WitchDrawer.Core.Storage;
@@ -150,6 +150,89 @@ public sealed class TodoServiceTests
 
         Assert.Empty(await workspace.Service.GetTodosAsync(workspace.BoxId));
         Assert.Single(await workspace.Service.GetTodosAsync(secondBox.Id));
+    }
+
+    [Fact]
+    public async Task DailyReset_ClearsCompletionsOnlyOnTheNextDay()
+    {
+        using var workspace = await TodoWorkspace.CreateAsync();
+        var today = DateTimeOffset.Now;
+        var tomorrow = today.AddDays(1);
+        var first = await workspace.Service.AddTodoAsync(workspace.BoxId, "first");
+        var second = await workspace.Service.AddTodoAsync(workspace.BoxId, "second");
+        await workspace.Service.SetDailyResetAsync(workspace.BoxId, enabled: true, today);
+
+        // 当天全部完成：只是记下完成日，不重置。
+        await workspace.Service.SetCompletedAsync(first.Id, isCompleted: true);
+        await workspace.Service.SetCompletedAsync(second.Id, isCompleted: true);
+
+        var sameDay = await workspace.Service.ApplyDailyResetAsync(workspace.BoxId, today);
+        Assert.Equal(0, sameDay);
+        Assert.All(await workspace.Service.GetTodosAsync(workspace.BoxId), todo => Assert.True(todo.IsCompleted));
+
+        // 第二天：全部清回未完成。
+        var nextDay = await workspace.Service.ApplyDailyResetAsync(workspace.BoxId, tomorrow);
+        Assert.Equal(2, nextDay);
+
+        var resetTodos = await workspace.Service.GetTodosAsync(workspace.BoxId);
+        Assert.All(resetTodos, todo => Assert.False(todo.IsCompleted));
+        Assert.All(resetTodos, todo => Assert.Null(todo.CompletedAt));
+
+        // 同一天再跑一次：已经重置过，不应再报数量。
+        var again = await workspace.Service.ApplyDailyResetAsync(workspace.BoxId, tomorrow.AddHours(1));
+        Assert.Equal(0, again);
+    }
+
+    [Fact]
+    public async Task DailyReset_DoesNotResetPartiallyCompletedList()
+    {
+        using var workspace = await TodoWorkspace.CreateAsync();
+        var today = DateTimeOffset.Now;
+        var first = await workspace.Service.AddTodoAsync(workspace.BoxId, "first");
+        await workspace.Service.AddTodoAsync(workspace.BoxId, "second");
+        await workspace.Service.SetDailyResetAsync(workspace.BoxId, enabled: true, today);
+        await workspace.Service.SetCompletedAsync(first.Id, isCompleted: true);
+
+        var nextDay = await workspace.Service.ApplyDailyResetAsync(workspace.BoxId, today.AddDays(1));
+
+        Assert.Equal(0, nextDay);
+        var todos = await workspace.Service.GetTodosAsync(workspace.BoxId);
+        Assert.True(todos.Single(todo => todo.Id == first.Id).IsCompleted);
+    }
+
+    [Fact]
+    public async Task DailyReset_DisabledBoxIsNeverReset()
+    {
+        using var workspace = await TodoWorkspace.CreateAsync();
+        var todo = await workspace.Service.AddTodoAsync(workspace.BoxId, "only");
+        await workspace.Service.SetCompletedAsync(todo.Id, isCompleted: true);
+
+        var resetCount = await workspace.Service.ApplyDailyResetAsync(
+            workspace.BoxId,
+            DateTimeOffset.Now.AddDays(1));
+
+        Assert.Equal(0, resetCount);
+        Assert.True((await workspace.Service.GetTodosAsync(workspace.BoxId)).Single().IsCompleted);
+        Assert.False(await workspace.Service.GetDailyResetAsync(workspace.BoxId));
+    }
+
+    [Fact]
+    public async Task ApplyDailyResetsAsync_ReportsOnlyBoxesThatWereReset()
+    {
+        using var workspace = await TodoWorkspace.CreateAsync();
+        var today = DateTimeOffset.Now;
+        var otherBox = await workspace.DrawerService.CreateBoxAsync("todo-2", BoxType.Todo);
+        var first = await workspace.Service.AddTodoAsync(workspace.BoxId, "first");
+        var other = await workspace.Service.AddTodoAsync(otherBox.Id, "other");
+        await workspace.Service.SetDailyResetAsync(workspace.BoxId, enabled: true, today);
+        await workspace.Service.SetCompletedAsync(first.Id, isCompleted: true);
+        await workspace.Service.SetCompletedAsync(other.Id, isCompleted: true);
+
+        var resetBoxIds = await workspace.Service.ApplyDailyResetsAsync(today.AddDays(1));
+
+        Assert.Equal([workspace.BoxId], resetBoxIds);
+        Assert.False((await workspace.Service.GetTodosAsync(workspace.BoxId)).Single().IsCompleted);
+        Assert.True((await workspace.Service.GetTodosAsync(otherBox.Id)).Single().IsCompleted);
     }
 
     private sealed class TodoWorkspace : IDisposable

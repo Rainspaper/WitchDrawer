@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using Microsoft.Data.Sqlite;
 using WitchDrawer.Core.Models;
 
@@ -800,6 +800,33 @@ public sealed class DrawerRepository
         {
             throw new InvalidOperationException("Todo does not exist.");
         }
+    }
+
+    /// <summary>
+    /// 把某个待办盒里「已完成且未归档」的事项全部重置为未完成（每日循环用）。
+    /// 返回被重置的行数。
+    /// </summary>
+    public async Task<int> ResetTodoCompletionsAsync(
+        Guid boxId,
+        DateTimeOffset updatedAt,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken);
+
+        var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            UPDATE Todos
+            SET IsCompleted = 0,
+                CompletedAt = NULL,
+                UpdatedAt = $updatedAt
+            WHERE BoxId = $boxId AND IsCompleted = 1 AND IsArchived = 0;
+            """;
+        command.Parameters.AddWithValue("$boxId", boxId.ToString());
+        command.Parameters.AddWithValue("$updatedAt", ToDb(updatedAt));
+
+        return await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task RemoveTodoAsync(Guid todoId, CancellationToken cancellationToken = default)
