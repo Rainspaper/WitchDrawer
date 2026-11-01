@@ -144,6 +144,7 @@ public partial class App : Application
                 quickPanelHotKeySettings);
             logger.Info($"[perf] database initialized in {dataInitWatch.ElapsedMilliseconds} ms.");
             await RestoreLegacyHiddenDesktopIconsAsync(drawerService, logger);
+            await RestoreTransientHiddenDesktopIconsAsync(drawerService, logger);
             AppThemeManager.Apply(await LoadSavedThemeAsync(drawerService));
 
             var quickPanelViewModel = new QuickPanelViewModel(
@@ -204,12 +205,28 @@ public partial class App : Application
                     () => mainViewModel.ReloadItemsFromDesktopAsync(eventArgs.BoxId),
                     "ReloadItemsFromDesktopAsync",
                     logger);
-            _desktopBoxManager.DesktopBackgroundDoubleClicked += (_, _) =>
+            _desktopBoxManager.DesktopBackgroundDoubleClicked += async (_, _) =>
             {
-                if (mainViewModel.ToggleDesktopIconsCommand.CanExecute(null))
+                if (!mainViewModel.ToggleDesktopIconsCommand.CanExecute(null))
                 {
-                    mainViewModel.ToggleDesktopIconsCommand.Execute(null);
+                    return;
                 }
+
+                // 「双击桌面」的隐藏是临时切换：记录标记，下次启动自动恢复显示。
+                // 设置页手动开关不写标记——手动隐藏是持久意图，跨重启保留。
+                var willHide = !mainViewModel.AreDesktopIconsHidden;
+                try
+                {
+                    await drawerService.SetSettingAsync(
+                        MainViewModel.DesktopIconsTransientHideSettingKey,
+                        willHide ? bool.TrueString : bool.FalseString);
+                }
+                catch (Exception exception)
+                {
+                    logger.Error(exception, "Failed to record the transient desktop icon hide intent.");
+                }
+
+                mainViewModel.ToggleDesktopIconsCommand.Execute(null);
             };
             _mainWindow.ReopenBoxRequested += async (_, boxId) => await _desktopBoxManager.ShowAsync(boxId);
             _mainWindow.RecordLayoutBackupRequested += async (_, slot) =>
@@ -402,6 +419,38 @@ public partial class App : Application
         catch (Exception exception)
         {
             logger.Error(exception, "Failed to restore hidden desktop icons.");
+        }
+    }
+
+    /// <summary>
+    /// 「双击桌面切换」造成的隐藏属于临时切换：每次启动恢复显示（设置页手动开关
+    /// 的隐藏不带此标记，跨重启保留）。失败不阻断启动。
+    /// </summary>
+    private static async Task RestoreTransientHiddenDesktopIconsAsync(
+        DrawerService drawerService,
+        IAppLogger logger)
+    {
+        try
+        {
+            var restored = await DesktopIconRestoreFlow.RestoreTransientHideAsync(
+                isTransientFlaggedAsync: async () => string.Equals(
+                    await drawerService.GetSettingAsync(
+                        MainViewModel.DesktopIconsTransientHideSettingKey),
+                    bool.TrueString,
+                    StringComparison.OrdinalIgnoreCase),
+                isHidden: DesktopIconVisibility.IsHidden,
+                restoreAsync: async () => await DesktopIconVisibility.RestoreIfHiddenAsync(),
+                clearFlagAsync: () => drawerService.SetSettingAsync(
+                    MainViewModel.DesktopIconsTransientHideSettingKey,
+                    bool.FalseString));
+            if (restored)
+            {
+                logger.Info("Restored desktop icons hidden by a transient double-click toggle.");
+            }
+        }
+        catch (Exception exception)
+        {
+            logger.Error(exception, "Failed to restore transiently hidden desktop icons.");
         }
     }
 

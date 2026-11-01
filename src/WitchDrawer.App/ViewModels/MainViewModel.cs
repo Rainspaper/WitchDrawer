@@ -27,6 +27,7 @@ public sealed class MainViewModel : ObservableObject
     internal const string DesktopDoubleClickSettingKey = "DesktopDoubleClickToggle";
     internal const string DesktopDoubleClickDefaultVersionSettingKey = "DesktopDoubleClickDefaultVersion";
     internal const string DesktopDoubleClickDefaultVersion = "2";
+    internal const string DesktopIconsTransientHideSettingKey = "DesktopIconsTransientHide";
     internal const string AboutPageShownSettingKey = "AboutPageShown";
     private const string StartupRegistryKeyName = "WitchDrawer";
 
