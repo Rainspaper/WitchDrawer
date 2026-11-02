@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using System.Runtime.InteropServices;
+using System.Diagnostics;
 using WitchDrawer.Core.Logging;
 using WitchDrawer.Core.Services;
 
@@ -239,7 +240,7 @@ public sealed class UpdateServiceTests
 
             using var updaterProcess = Process.Start(startInfo);
             Assert.NotNull(updaterProcess);
-            await updaterProcess.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+            await WaitForProcessTreeExitAsync(updaterProcess, TimeSpan.FromSeconds(60));
 
             var updaterLog = File.Exists(logPath)
                 ? await File.ReadAllTextAsync(logPath)
@@ -315,7 +316,7 @@ public sealed class UpdateServiceTests
             Assert.Equal("old", await File.ReadAllTextAsync(appExecutablePath));
 
             await originalProcess.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
-            await updaterProcess.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+            await WaitForProcessTreeExitAsync(updaterProcess, TimeSpan.FromSeconds(60));
             Assert.Equal(0, updaterProcess.ExitCode);
             await WaitForConditionAsync(() => File.Exists(markerPath), TimeSpan.FromSeconds(5));
         }
@@ -380,7 +381,7 @@ public sealed class UpdateServiceTests
             Assert.NotNull(updaterProcess);
             await WaitForConditionAsync(() => File.Exists(introducedAppPath), TimeSpan.FromSeconds(5));
             Assert.Equal("new-introduced", await File.ReadAllTextAsync(introducedAppPath));
-            await updaterProcess.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+            await WaitForProcessTreeExitAsync(updaterProcess, TimeSpan.FromSeconds(60));
 
             Assert.NotEqual(0, updaterProcess.ExitCode);
             Assert.Equal("old-first", await File.ReadAllTextAsync(firstAppPath));
@@ -443,7 +444,7 @@ public sealed class UpdateServiceTests
 
             using var updaterProcess = Process.Start(startInfo);
             Assert.NotNull(updaterProcess);
-            await updaterProcess.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+            await WaitForProcessTreeExitAsync(updaterProcess, TimeSpan.FromSeconds(60));
 
             Assert.NotEqual(0, updaterProcess.ExitCode);
             Assert.Contains("echo original", await File.ReadAllTextAsync(appExecutablePath));
@@ -497,7 +498,7 @@ public sealed class UpdateServiceTests
 
             using var updaterProcess = Process.Start(startInfo);
             Assert.NotNull(updaterProcess);
-            await updaterProcess.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+            await WaitForProcessTreeExitAsync(updaterProcess, TimeSpan.FromSeconds(60));
 
             Assert.NotEqual(0, updaterProcess.ExitCode);
             Assert.Contains("echo restored", await File.ReadAllTextAsync(appExecutablePath));
@@ -510,6 +511,147 @@ public sealed class UpdateServiceTests
             await DeleteDirectoryWithRetryAsync(testRoot, TimeSpan.FromSeconds(30));
         }
     }
+
+    /// <summary>
+    /// 等待 updater 的<b>整棵进程树</b>退出。
+    /// <para>
+    /// <see cref="Process.WaitForExitAsync"/> 只能等到直接子进程（cmd.exe）自己退出：
+    /// cmd.exe 会先启动 updater.cmd，updater.cmd 再启动被测的 app（另一个 .cmd）。
+    /// 孙进程完全可能仍活着并持有 app 目录/日志文件的句柄，于是后续读取或删除目录
+    /// 就会抛 IOException（CI 上因为慢磁盘 + Defender 扫描而稳定复现）。
+    /// 这里用 Job 对象之外的做法：持续查询该进程的所有后代，直到全部消失。
+    /// </para>
+    /// </summary>
+    private static async Task WaitForProcessTreeExitAsync(Process process, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+
+        // 先等直接子进程退出。
+        try
+        {
+            await process.WaitForExitAsync().WaitAsync(timeout);
+        }
+        catch (TimeoutException)
+        {
+            Assert.Fail("Timed out waiting for the updater process to exit.");
+        }
+
+        // 再等它启动的后代全部消失（cmd.exe 退出后孙进程可能还在收尾）。
+        while (DateTime.UtcNow < deadline)
+        {
+            var descendants = FindDescendantProcessIds(process.Id);
+            if (descendants.Count == 0)
+            {
+                return;
+            }
+
+            await Task.Delay(100);
+        }
+    }
+
+    /// <summary>
+    /// 找出某个进程当前仍存活的所有后代进程 Id。
+    /// 用 WMI 的 ParentProcessId 链，避免依赖 Job 对象（测试进程不需要额外权限）。
+    /// </summary>
+    private static List<int> FindDescendantProcessIds(int rootProcessId)
+    {
+        var childrenByParent = new Dictionary<int, List<int>>();
+        foreach (var candidate in Process.GetProcesses())
+        {
+            try
+            {
+                var parentId = GetParentProcessId(candidate);
+                if (parentId <= 0)
+                {
+                    continue;
+                }
+
+                if (!childrenByParent.TryGetValue(parentId, out var children))
+                {
+                    children = [];
+                    childrenByParent[parentId] = children;
+                }
+
+                children.Add(candidate.Id);
+            }
+            catch (InvalidOperationException)
+            {
+                // 进程在枚举期间退出：忽略。
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                // 无权限读取该进程：忽略。
+            }
+            finally
+            {
+                candidate.Dispose();
+            }
+        }
+
+        var result = new List<int>();
+        var pending = new Queue<int>();
+        pending.Enqueue(rootProcessId);
+        while (pending.Count > 0)
+        {
+            var current = pending.Dequeue();
+            if (!childrenByParent.TryGetValue(current, out var children))
+            {
+                continue;
+            }
+
+            foreach (var child in children)
+            {
+                if (result.Contains(child))
+                {
+                    continue;
+                }
+
+                result.Add(child);
+                pending.Enqueue(child);
+            }
+        }
+
+        return result;
+    }
+
+    private static int GetParentProcessId(Process process)
+    {
+        try
+        {
+            var info = new ProcessBasicInformation();
+            var status = NtQueryInformationProcess(
+                process.Handle,
+                0,
+                ref info,
+                Marshal.SizeOf<ProcessBasicInformation>(),
+                out _);
+            return status == 0 ? info.InheritedFromUniqueProcessId.ToInt32() : 0;
+        }
+        catch (Exception)
+        {
+            // 进程已退出或无权限：当作没有父进程。
+            return 0;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ProcessBasicInformation
+    {
+        public nint ExitStatus;
+        public nint PebBaseAddress;
+        public nint AffinityMask;
+        public nint BasePriority;
+        public nint UniqueProcessId;
+        public nint InheritedFromUniqueProcessId;
+    }
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtQueryInformationProcess(
+        nint processHandle,
+        int processInformationClass,
+        ref ProcessBasicInformation processInformation,
+        int processInformationLength,
+        out int returnLength);
 
     private static async Task WaitForConditionAsync(Func<bool> condition, TimeSpan timeout)
     {
