@@ -1,16 +1,18 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using WitchDrawer.App.Infrastructure;
 using WitchDrawer.App.ViewModels;
+using WitchDrawer.Native.Windows;
 
 namespace WitchDrawer.App.Views;
 
 public partial class QuickPanelWindow : Window
 {
     private bool _forceClose;
+    private IDisposable? _outsideInputMonitor;
 
     public QuickPanelWindow(QuickPanelViewModel viewModel)
     {
@@ -18,6 +20,8 @@ public partial class QuickPanelWindow : Window
         InitializeComponent();
         Loaded += OnLoaded;
         DpiChanged += OnDpiChanged;
+        Deactivated += OnDeactivated;
+        IsVisibleChanged += OnIsVisibleChanged;
         AppThemeManager.ThemeChanged += OnThemeChanged;
     }
 
@@ -28,6 +32,7 @@ public partial class QuickPanelWindow : Window
         if (IsVisible && IsActive)
         {
             Hide();
+            StopOutsideInputMonitor();
             return;
         }
 
@@ -37,12 +42,78 @@ public partial class QuickPanelWindow : Window
         Activate();
         SearchBox.Focus();
         SearchBox.SelectAll();
+        StartOutsideInputMonitor();
     }
 
     public void ForceClose()
     {
         _forceClose = true;
         Close();
+    }
+
+    /// <summary>
+    /// 点击面板外部即退出。面板是 Topmost 且已激活，点别的窗口会先触发
+    /// Window.Deactivated；但点桌面/任务栏这类"不激活任何窗口"的区域不会，
+    /// 所以这里复用 TransientMenuWindow 的低层鼠标钩（零轮询、按钮按下才回调）。
+    /// </summary>
+    private void StartOutsideInputMonitor()
+    {
+        _outsideInputMonitor?.Dispose();
+        _outsideInputMonitor = null;
+
+        var handle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        if (handle == nint.Zero)
+        {
+            return;
+        }
+
+        try
+        {
+            _outsideInputMonitor = TransientMenuWindow.DismissOnOutsideInput(
+                handle,
+                () => Dispatcher.BeginInvoke(
+                    System.Windows.Threading.DispatcherPriority.Input,
+                    new Action(() =>
+                    {
+                        if (IsVisible)
+                        {
+                            Hide();
+                        }
+                    })));
+        }
+        catch (Exception exception)
+        {
+            // 钩子装不上不影响面板本身：退化为"失焦即隐藏"（见 OnDeactivated）。
+            System.Diagnostics.Debug.WriteLine($"Quick panel outside-input hook failed: {exception.Message}");
+        }
+    }
+
+    private void StopOutsideInputMonitor()
+    {
+        _outsideInputMonitor?.Dispose();
+        _outsideInputMonitor = null;
+    }
+
+    /// <summary>
+    /// 面板一隐藏就释放低层钩子：钩子是全局的，留着会在面板不可见时继续吃
+    /// 每次鼠标按下（无谓开销），也会在下次显示前重复挂钩。
+    /// </summary>
+    private void OnIsVisibleChanged(object? sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (e.NewValue is false)
+        {
+            StopOutsideInputMonitor();
+        }
+    }
+
+    /// <summary>失焦即退出（点其它窗口时走这条更轻的路径）。</summary>
+    private void OnDeactivated(object? sender, EventArgs e)
+    {
+        StopOutsideInputMonitor();
+        if (IsVisible)
+        {
+            Hide();
+        }
     }
 
     protected override void OnClosing(CancelEventArgs e)
@@ -60,6 +131,9 @@ public partial class QuickPanelWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         Loaded -= OnLoaded;
+        IsVisibleChanged -= OnIsVisibleChanged;
+        Deactivated -= OnDeactivated;
+        StopOutsideInputMonitor();
         DpiChanged -= OnDpiChanged;
         AppThemeManager.ThemeChanged -= OnThemeChanged;
         base.OnClosed(e);
