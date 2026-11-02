@@ -1,4 +1,4 @@
-﻿; WitchDrawer Inno Setup script
+; WitchDrawer Inno Setup script
 ; Build: ISCC.exe WitchDrawer.iss
 ; Produces a Windows installer (-Setup.exe) alongside the portable zip.
 ;
@@ -55,7 +55,7 @@ UninstallDisplayName={#MyAppName}
 ; boxes/items there, so we never touch it from the installer.
 
 [Languages]
-Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+Name: "chinesesimp"; MessagesFile: "{#SourcePath}\ChineseSimplified.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
