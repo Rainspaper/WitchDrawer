@@ -1,4 +1,4 @@
-using CommunityToolkit.Mvvm.ComponentModel;
+﻿using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using WitchDrawer.App.Infrastructure;
 using WitchDrawer.Core.Abstractions;
@@ -176,13 +176,16 @@ public sealed class QuickPanelViewModel : ObservableObject
         var query = SearchText.Trim();
         var filtered = string.IsNullOrWhiteSpace(query)
             ? _allItems
-            : _allItems.Where(item =>
-                item.DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase)
-                || item.PathLabel.Contains(query, StringComparison.OrdinalIgnoreCase)
-                || item.BoxName.Contains(query, StringComparison.OrdinalIgnoreCase));
+            : _allItems.Where(item => item.MatchesSearch(query));
 
         Items.ReplaceAll(filtered.Take(300));
-        StatusText = $"{Items.Count} / {_allItems.Count} 项";
+
+        // 纯字母查询额外提示"按拼音首字母匹配"，让用户知道 wx 为什么能命中微信。
+        StatusText = string.IsNullOrWhiteSpace(query)
+            ? $"{Items.Count} / {_allItems.Count} 项"
+            : PinyinInitials.IsInitialsQuery(query)
+                ? $"{Items.Count} / {_allItems.Count} 项（含拼音首字母匹配）"
+                : $"{Items.Count} / {_allItems.Count} 项";
     }
 
     private List<DrawerItemViewModel> CreateItemViewModels(

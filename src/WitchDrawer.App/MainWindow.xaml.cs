@@ -23,17 +23,24 @@ public partial class MainWindow : Window
     private const string BoxListDragFormat = "WitchDrawer.BoxListOrder";
     private const int WmHotKey = 0x0312;
     private const int QuickPanelHotKeyId = 0x5744;
+    private const int BoxesHotKeyId = 0x5745;
     internal const string SupportPageUri = "https://www.witchcat.cn/zh/support";
 
     private readonly Lazy<QuickPanelWindow> _quickPanel;
     private bool _windowClosed;
     private readonly IAppLogger _logger;
     private readonly QuickPanelHotKeySettingsStore _hotKeySettings;
+    private readonly BoxesHotKeySettingsStore? _boxesHotKeySettings;
     private QuickPanelHotKey _quickPanelHotKey;
+    private BoxesHotKey _boxesHotKey;
     private NativeHotKey? _hotKey;
     private bool _isHotKeyRegistered;
     private bool _isCapturingHotKey;
     private bool _isApplyingHotKey;
+    private NativeHotKey? _boxesHotKeyRegistration;
+    private bool _isBoxesHotKeyRegistered;
+    private bool _isApplyingBoxesHotKey;
+    private bool _isCapturingBoxesHotKey;
     private HwndSource? _source;
     private DispatcherTimer? _todoDailyResetTimer;
     private Point? _boxDragStart;
@@ -46,6 +53,9 @@ public partial class MainWindow : Window
     public event EventHandler? WindowHidden;
     public event EventHandler? WindowClosing;
     public event EventHandler? DesktopShellRestarted;
+
+    /// <summary>用户按下「唤起收纳盒」热键（已通过全屏检查）。</summary>
+    public event Func<object?, EventArgs, Task>? BoxesRaiseRequested;
 
     public event EventHandler<int>? RecordLayoutBackupRequested;
 
@@ -72,7 +82,9 @@ public partial class MainWindow : Window
         Func<QuickPanelWindow> quickPanelFactory,
         IAppLogger logger,
         QuickPanelHotKeySettingsStore hotKeySettings,
-        QuickPanelHotKey quickPanelHotKey)
+        QuickPanelHotKey quickPanelHotKey,
+        BoxesHotKeySettingsStore? boxesHotKeySettings = null,
+        BoxesHotKey? boxesHotKey = null)
     {
         DataContext = viewModel;
         // 快捷面板窗口按需构造：它只在用户按下热键时才需要显示，
@@ -81,6 +93,8 @@ public partial class MainWindow : Window
         _logger = logger;
         _hotKeySettings = hotKeySettings;
         _quickPanelHotKey = quickPanelHotKey;
+        _boxesHotKeySettings = boxesHotKeySettings;
+        _boxesHotKey = boxesHotKey ?? BoxesHotKey.None;
         InitializeComponent();
         // 每日循环：主窗口常驻托盘时也要能跨过午夜自动重置勾选。
         _todoDailyResetTimer = new DispatcherTimer(
@@ -89,6 +103,15 @@ public partial class MainWindow : Window
             OnTodoDailyResetTimerTick,
             Dispatcher);
         _todoDailyResetTimer.Start();
+        _todoDailyResetTimer.Start();
+
+        // 热键设置页初始状态：显示当前键位（可能为空=未设置）并选中回落时机。
+        UpdateBoxesHotKeyUi(_boxesHotKey.IsEmpty ? "未设置（点击后按键）" : "点击按钮可修改");
+        ApplyBoxesRevertModeToUi();
+        if (_boxesHotKeySettings is not null)
+        {
+            _ = LoadBoxesRevertModeAsync();
+        }
         UpdateHotKeyUi("点击按钮可修改");
         Loaded += OnLoaded;
         DpiChanged += OnDpiChanged;
@@ -157,6 +180,8 @@ public partial class MainWindow : Window
             _source?.AddHook(WndProc);
 
             _hotKey = new NativeHotKey(handle, QuickPanelHotKeyId);
+            _boxesHotKeyRegistration = new NativeHotKey(handle, BoxesHotKeyId);
+            RegisterBoxesHotKey();
             RegisterInitialHotKey();
         }
         catch (Exception exception)
@@ -188,6 +213,7 @@ public partial class MainWindow : Window
         ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
         _source?.RemoveHook(WndProc);
         _hotKey?.Dispose();
+        _boxesHotKeyRegistration?.Dispose();
         _todoDailyResetTimer?.Stop();
         _windowClosed = true;
         if (_quickPanel.IsValueCreated)
@@ -289,6 +315,78 @@ public partial class MainWindow : Window
         AppThemeManager.ClearEditorOpacityResources(Resources);
     }
 
+    /// <summary>
+    /// 注册「唤起收纳盒」热键。为空表示不注册（用户清空过）。
+    /// 失败时只记录日志 + 状态文本，不影响快捷面板热键。
+    /// </summary>
+    private void RegisterBoxesHotKey()
+    {
+        if (_boxesHotKeyRegistration is null)
+        {
+            return;
+        }
+
+        if (_boxesHotKey.IsEmpty)
+        {
+            _boxesHotKeyRegistration.Unregister();
+            _isBoxesHotKeyRegistered = false;
+            return;
+        }
+
+        try
+        {
+            _boxesHotKeyRegistration.Register(
+                _boxesHotKey.RegistrationModifiers,
+                _boxesHotKey.VirtualKey);
+            _isBoxesHotKeyRegistered = true;
+        }
+        catch (Exception exception)
+        {
+            _isBoxesHotKeyRegistered = false;
+            _logger.Error(exception, "Failed to register boxes hotkey.");
+            if (BoxesHotKeyStatusText is not null)
+            {
+                BoxesHotKeyStatusText.Text = GetHotKeyErrorText(exception);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 热键触发：没有唤起的盒子就唤起全部；已有唤起的盒子则在
+    /// 「再按一次回落」模式下回落（「失焦回落」模式下按一次即回落）。
+    /// 全屏程序在前台时直接忽略，避免盖住游戏/全屏视频。
+    /// </summary>
+    private async Task ToggleBoxesRaiseAsync()
+    {
+        if (DesktopBoxManager.IsFullscreenActive())
+        {
+            ReportHotKeyBlockedByFullscreen();
+            return;
+        }
+
+        try
+        {
+            if (BoxesRaiseRequested is null)
+            {
+                return;
+            }
+
+            await BoxesRaiseRequested(this, EventArgs.Empty);
+        }
+        catch (Exception exception)
+        {
+            _logger.Error(exception, "Failed to toggle boxes raise via hotkey.");
+        }
+    }
+
+    private void ReportHotKeyBlockedByFullscreen()
+    {
+        if (BoxesHotKeyStatusText is not null)
+        {
+            BoxesHotKeyStatusText.Text = "全屏程序运行中，热键已暂停";
+        }
+    }
+
     private void RegisterInitialHotKey()
     {
         if (_hotKey is null)
@@ -309,6 +407,276 @@ public partial class MainWindow : Window
             UpdateHotKeyUi(GetHotKeyErrorText(exception));
         }
     }
+
+    private bool _isApplyingBoxesRevertMode;
+    private BoxesHotKeyRevertMode _boxesRevertMode = BoxesHotKeyRevertMode.OnFocusLoss;
+
+    private void OnBoxesHotKeyButtonClick(object sender, RoutedEventArgs e)
+    {
+        if (_isApplyingBoxesHotKey)
+        {
+            return;
+        }
+
+        _isCapturingBoxesHotKey = true;
+        BoxesHotKeyButton.Content = "请按新快捷键…";
+        BoxesHotKeyStatusText.Text = "需包含 Ctrl、Alt 或 Win；Esc 取消，Delete 清空";
+        BoxesHotKeyButton.Focus();
+        Keyboard.Focus(BoxesHotKeyButton);
+    }
+
+    private async void OnBoxesHotKeyPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (!_isCapturingBoxesHotKey)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (key == Key.Escape)
+        {
+            CancelBoxesHotKeyCapture("已取消修改");
+            return;
+        }
+
+        if (key is Key.Delete or Key.Back)
+        {
+            // 清空：合法的"未设置"状态，不注册任何热键。
+            _isCapturingBoxesHotKey = false;
+            await ApplyBoxesHotKeyAsync(BoxesHotKey.None);
+            return;
+        }
+
+        if (IsModifierKey(key))
+        {
+            BoxesHotKeyStatusText.Text = "继续按下一个非修饰键";
+            return;
+        }
+
+        var modifiers = GetHotKeyModifiers(Keyboard.Modifiers);
+        if ((modifiers & (HotKeyModifiers.Control | HotKeyModifiers.Alt | HotKeyModifiers.Win)) == 0)
+        {
+            BoxesHotKeyStatusText.Text = "请至少按住 Ctrl、Alt 或 Win";
+            return;
+        }
+
+        var virtualKey = (uint)KeyInterop.VirtualKeyFromKey(key);
+        var candidate = new BoxesHotKey(modifiers, virtualKey);
+        if (!candidate.IsValid)
+        {
+            BoxesHotKeyStatusText.Text = "这个按键不能用作全局快捷键";
+            return;
+        }
+
+        _isCapturingBoxesHotKey = false;
+        _isApplyingBoxesHotKey = true;
+        BoxesHotKeyButton.IsEnabled = false;
+        try
+        {
+            await ApplyBoxesHotKeyAsync(candidate);
+        }
+        finally
+        {
+            _isApplyingBoxesHotKey = false;
+            BoxesHotKeyButton.IsEnabled = true;
+        }
+    }
+
+    private void OnBoxesHotKeyLostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (_isCapturingBoxesHotKey)
+        {
+            CancelBoxesHotKeyCapture("已取消修改");
+        }
+    }
+
+    private async Task ApplyBoxesHotKeyAsync(BoxesHotKey candidate)
+    {
+        if (_boxesHotKeyRegistration is null)
+        {
+            UpdateBoxesHotKeyUi("快捷键组件尚未初始化");
+            return;
+        }
+
+        if (candidate == _boxesHotKey && _isBoxesHotKeyRegistered == !candidate.IsEmpty)
+        {
+            UpdateBoxesHotKeyUi("快捷键未更改");
+            return;
+        }
+
+        var previous = _boxesHotKey;
+        var previousWasRegistered = _isBoxesHotKeyRegistered;
+        try
+        {
+            if (candidate.IsEmpty)
+            {
+                _boxesHotKeyRegistration.Unregister();
+                _isBoxesHotKeyRegistered = false;
+            }
+            else
+            {
+                _boxesHotKeyRegistration.Register(
+                    candidate.RegistrationModifiers,
+                    candidate.VirtualKey);
+                _isBoxesHotKeyRegistered = true;
+            }
+        }
+        catch (Exception exception)
+        {
+            _logger.Error(exception, "Failed to register the requested boxes hotkey.");
+            RestorePreviousBoxesHotKey(previous, previousWasRegistered);
+            UpdateBoxesHotKeyUi(GetHotKeyErrorText(exception));
+            return;
+        }
+
+        try
+        {
+            if (_boxesHotKeySettings is not null)
+            {
+                await _boxesHotKeySettings.SaveHotKeyAsync(candidate);
+            }
+
+            _boxesHotKey = candidate;
+            UpdateBoxesHotKeyUi(candidate.IsEmpty ? "已清空（不响应热键）" : "已保存并立即生效");
+        }
+        catch (Exception exception)
+        {
+            _logger.Error(exception, "Failed to save boxes hotkey.");
+            RestorePreviousBoxesHotKey(previous, previousWasRegistered);
+            UpdateBoxesHotKeyUi("保存失败，已恢复原快捷键");
+        }
+    }
+
+    private void RestorePreviousBoxesHotKey(BoxesHotKey previous, bool previousWasRegistered)
+    {
+        if (_boxesHotKeyRegistration is null)
+        {
+            _isBoxesHotKeyRegistered = false;
+            return;
+        }
+
+        if (!previousWasRegistered || previous.IsEmpty)
+        {
+            _boxesHotKeyRegistration.Unregister();
+            _isBoxesHotKeyRegistered = false;
+            return;
+        }
+
+        try
+        {
+            _boxesHotKeyRegistration.Register(
+                previous.RegistrationModifiers,
+                previous.VirtualKey);
+            _isBoxesHotKeyRegistered = true;
+        }
+        catch (Exception restoreException)
+        {
+            _isBoxesHotKeyRegistered = false;
+            _logger.Error(restoreException, "Failed to restore previous boxes hotkey.");
+        }
+    }
+
+    private void CancelBoxesHotKeyCapture(string statusText)
+    {
+        _isCapturingBoxesHotKey = false;
+        UpdateBoxesHotKeyUi(statusText);
+    }
+
+    private void UpdateBoxesHotKeyUi(string statusText)
+    {
+        if (BoxesHotKeyButton is not null)
+        {
+            BoxesHotKeyButton.Content = _boxesHotKey.DisplayText;
+        }
+
+        if (BoxesHotKeyStatusText is not null)
+        {
+            BoxesHotKeyStatusText.Text = statusText;
+        }
+    }
+
+    private async void OnBoxesRevertModeChecked(object sender, RoutedEventArgs e)
+    {
+        if (_isApplyingBoxesRevertMode || _boxesHotKeySettings is null)
+        {
+            return;
+        }
+
+        var mode = BoxesRevertSecondPressRadio?.IsChecked == true
+            ? BoxesHotKeyRevertMode.OnSecondPress
+            : BoxesHotKeyRevertMode.OnFocusLoss;
+        if (mode == _boxesRevertMode)
+        {
+            return;
+        }
+
+        _isApplyingBoxesRevertMode = true;
+        try
+        {
+            await _boxesHotKeySettings.SaveRevertModeAsync(mode);
+            _boxesRevertMode = mode;
+            BoxesRevertModeChanged?.Invoke(this, mode);
+            BoxesHotKeyStatusText.Text = mode == BoxesHotKeyRevertMode.OnSecondPress
+                ? "回落时机：再按一次热键回落"
+                : "回落时机：切换窗口时回落";
+        }
+        catch (Exception exception)
+        {
+            _logger.Error(exception, "Failed to save boxes revert mode.");
+            ApplyBoxesRevertModeToUi();
+        }
+        finally
+        {
+            _isApplyingBoxesRevertMode = false;
+        }
+    }
+
+    /// <summary>把当前回落时机同步到设置页单选按钮。</summary>
+    /// <summary>读取持久化的回落时机并同步到 UI（不触发保存）。</summary>
+    private async Task LoadBoxesRevertModeAsync()
+    {
+        try
+        {
+            var mode = await _boxesHotKeySettings!.LoadRevertModeAsync();
+            if (mode == _boxesRevertMode)
+            {
+                return;
+            }
+
+            _boxesRevertMode = mode;
+            ApplyBoxesRevertModeToUi();
+            BoxesRevertModeChanged?.Invoke(this, mode);
+        }
+        catch (Exception exception)
+        {
+            _logger.Error(exception, "Failed to load boxes revert mode.");
+        }
+    }
+
+    private void ApplyBoxesRevertModeToUi()
+    {
+        if (BoxesRevertFocusLossRadio is null || BoxesRevertSecondPressRadio is null)
+        {
+            return;
+        }
+
+        _isApplyingBoxesRevertMode = true;
+        try
+        {
+            BoxesRevertFocusLossRadio.IsChecked = _boxesRevertMode == BoxesHotKeyRevertMode.OnFocusLoss;
+            BoxesRevertSecondPressRadio.IsChecked = _boxesRevertMode == BoxesHotKeyRevertMode.OnSecondPress;
+        }
+        finally
+        {
+            _isApplyingBoxesRevertMode = false;
+        }
+    }
+
+    /// <summary>当前「唤起收纳盒」热键的回落时机。</summary>
+    internal BoxesHotKeyRevertMode BoxesRevertMode => _boxesRevertMode;
+
+    internal event EventHandler<BoxesHotKeyRevertMode>? BoxesRevertModeChanged;
 
     private void OnQuickPanelHotKeyButtonClick(object sender, RoutedEventArgs e)
     {
@@ -615,6 +983,12 @@ public partial class MainWindow : Window
         {
             handled = true;
             _ = Dispatcher.InvokeAsync(async () => await _quickPanel.Value.ToggleAsync());
+        }
+
+        if (message == WmHotKey && wParam.ToInt32() == BoxesHotKeyId)
+        {
+            handled = true;
+            _ = Dispatcher.InvokeAsync(ToggleBoxesRaiseAsync);
         }
 
         return nint.Zero;

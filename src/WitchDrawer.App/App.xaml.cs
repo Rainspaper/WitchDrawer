@@ -125,6 +125,7 @@ public partial class App : Application
             var updateService = new UpdateService(logger);
             await updateService.CleanupLegacyUpdaterArtifactsAsync();
             var quickPanelHotKeySettings = new QuickPanelHotKeySettingsStore(drawerService);
+            var boxesHotKeySettings = new BoxesHotKeySettingsStore(drawerService);
             var boxVisualStyleStore = new BoxVisualStyleStore(drawerService, logger);
             var boxPositionLockStateStore =
                 new BoxPositionLockStateStore(drawerService, logger);
@@ -142,6 +143,7 @@ public partial class App : Application
             var quickPanelHotKey = await InitializeDataAndLoadQuickPanelHotKeyAsync(
                 drawerService,
                 quickPanelHotKeySettings);
+            var boxesHotKey = await boxesHotKeySettings.LoadHotKeyAsync();
             logger.Info($"[perf] database initialized in {dataInitWatch.ElapsedMilliseconds} ms.");
             await RestoreLegacyHiddenDesktopIconsAsync(drawerService, logger);
             await RestoreTransientHiddenDesktopIconsAsync(drawerService, logger);
@@ -190,10 +192,32 @@ public partial class App : Application
                 CreateQuickPanel,
                 logger,
                 quickPanelHotKeySettings,
-                quickPanelHotKey);
+                quickPanelHotKey,
+                boxesHotKeySettings,
+                boxesHotKey);
             logger.Info($"[perf] main window constructed in {mainWindowWatch.ElapsedMilliseconds} ms.");
             _desktopBoxManager.ShowDesktopActivated += (_, _) =>
                 _mainWindow.SendBehindDesktop();
+
+            // 热键「唤起收纳盒」：唤起/回落由 Manager 负责实际显示与 Z 序，
+            // MainWindow 只负责热键注册、全屏拦截与回落策略。
+            _mainWindow.BoxesRaiseRequested += async (_, _) =>
+            {
+                if (_desktopBoxManager.HasTemporarilyRaisedBoxes)
+                {
+                    // 已唤起：再按一次就回落（两种回落时机下都成立）。
+                    _desktopBoxManager.LowerAllRaised();
+                    return;
+                }
+
+                await _desktopBoxManager.RaiseAllAsync();
+            };
+            _desktopBoxManager.BoxesRaisedEnded += (_, _) =>
+                mainViewModel.ReportStatus("收纳盒已回落");
+            _mainWindow.BoxesRevertModeChanged += (_, mode) =>
+                _desktopBoxManager.SetRevertOnFocusLoss(mode == BoxesHotKeyRevertMode.OnFocusLoss);
+            _desktopBoxManager.SetRevertOnFocusLoss(
+                _mainWindow.BoxesRevertMode == BoxesHotKeyRevertMode.OnFocusLoss);
             StartSingleInstanceServer(logger);
             logger.Info($"[perf] view models and windows constructed at {startupWatch.ElapsedMilliseconds} ms, ws {Environment.WorkingSet / (1024 * 1024)} MB.");
 

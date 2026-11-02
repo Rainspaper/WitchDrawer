@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Threading;
 using System.Windows;
 using System.Windows.Media;
@@ -40,6 +40,8 @@ public sealed class DrawerItemViewModel : ObservableObject, IVirtualizingCanvasI
     {
         Model = model;
         BoxName = boxName ?? string.Empty;
+        DisplayNameInitials = PinyinInitials.Build(DisplayName);
+        BoxNameInitials = PinyinInitials.Build(BoxName);
         _isPixelated = isPixelated;
         _logger = logger;
         _requestedIconPixelSize = NormalizeIconPixelSize(iconPixelSize);
@@ -85,6 +87,42 @@ public sealed class DrawerItemViewModel : ObservableObject, IVirtualizingCanvasI
     }
 
     public string BoxName { get; }
+
+    /// <summary>
+    /// 名称的拼音首字母串（小写），供快捷面板用 wx 命中「微信」。
+    /// 在构造时算一次，之后只是普通字符串匹配。
+    /// </summary>
+    public string DisplayNameInitials { get; }
+
+    /// <summary>收纳盒名的拼音首字母串（小写）。</summary>
+    public string BoxNameInitials { get; }
+
+    /// <summary>
+    /// 快捷面板的模糊匹配：显示名/路径/盒名任一命中，或（纯字母查询时）
+    /// 命中显示名或盒名的拼音首字母。大小写不敏感。
+    /// </summary>
+    public bool MatchesSearch(string query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return true;
+        }
+
+        if (DisplayName.Contains(query, StringComparison.OrdinalIgnoreCase)
+            || PathLabel.Contains(query, StringComparison.OrdinalIgnoreCase)
+            || BoxName.Contains(query, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (!PinyinInitials.IsInitialsQuery(query))
+        {
+            return false;
+        }
+
+        return DisplayNameInitials.Contains(query.ToLowerInvariant(), StringComparison.Ordinal)
+            || BoxNameInitials.Contains(query.ToLowerInvariant(), StringComparison.Ordinal);
+    }
 
     public bool IsPixelated => _isPixelated;
 

@@ -60,6 +60,7 @@ public sealed class DesktopBoxManager
     private DesktopBoxWindow? _mergePreviewHost;
     private readonly DesktopToggleVisibilityState _desktopToggleVisibility = new();
     private readonly FullscreenSuppressionState _fullscreenSuppression = new();
+    private bool _revertRaisedOnFocusLoss = true;
     private readonly DispatcherTimer _fullscreenReevaluationTimer;
     private nint _lastFullscreenWindow;
 
@@ -156,6 +157,9 @@ public sealed class DesktopBoxManager
     public event EventHandler<BoxItemsChangedEventArgs>? ItemsChanged;
 
     public event EventHandler? DesktopBackgroundDoubleClicked;
+
+    /// <summary>热键唤起的盒子全部回落（用于同步状态栏文本）。</summary>
+    public event EventHandler? BoxesRaisedEnded;
 
     public event EventHandler? ShowDesktopActivated;
 
@@ -640,6 +644,82 @@ public sealed class DesktopBoxManager
         // refresh so the box window is recreated for the current box set.
         await RefreshAsync();
         return _windows.TryGetValue(boxId, out var refreshed) && refreshed.IsVisible;
+    }
+
+    /// <summary>当前是否有盒子被热键临时唤起（用于判断"再按一次回落"）。</summary>
+    /// <summary>
+    /// 「切换窗口时回落」开关：热键唤起的盒子是否在应用失焦/切到其它程序时自动回落。
+    /// 关闭后由用户再按一次热键回落。
+    /// </summary>
+    public void SetRevertOnFocusLoss(bool enabled) => _revertRaisedOnFocusLoss = enabled;
+
+    /// <summary>当前是否会在切走窗口时自动回落热键唤起的盒子。</summary>
+    public bool RevertRaisedOnFocusLoss => _revertRaisedOnFocusLoss;
+
+    public bool HasTemporarilyRaisedBoxes =>
+        _windows.Values.Any(window => window.IsVisible && window.IsTemporarilyRaised);
+
+    /// <summary>
+    /// 热键唤起：显示所有收纳盒/待办盒并临时抬到普通窗口层顶部。
+    /// 全屏程序占用显示器时不做任何事（调用方用 <see cref="IsFullscreenActive"/> 判定）。
+    /// </summary>
+    public async Task RaiseAllAsync()
+    {
+        if (_closing)
+        {
+            return;
+        }
+
+        await _refreshGate.WaitAsync();
+        try
+        {
+            if (_closing)
+            {
+                return;
+            }
+
+            // 用户显式要求显示全部：整体隐藏状态与全屏压制一并让位。
+            _desktopToggleVisibility.EndHide();
+            foreach (var window in _windows.Values)
+            {
+                if (!window.IsVisible)
+                {
+                    await window.ViewModel.LoadAsync();
+                    if (_closing)
+                    {
+                        return;
+                    }
+
+                    _fullscreenSuppression.Forget(window.ViewModel.BoxId);
+                    window.Show();
+                }
+
+                window.BeginTemporaryRaise();
+            }
+        }
+        finally
+        {
+            _refreshGate.Release();
+        }
+    }
+
+    /// <summary>热键回落：所有临时唤起的盒子恢复常态（强制置底）。</summary>
+    public void LowerAllRaised()
+    {
+        foreach (var window in _windows.Values)
+        {
+            if (window.IsTemporarilyRaised)
+            {
+                window.EndTemporaryRaise();
+            }
+        }
+    }
+
+    /// <summary>当前前台窗口是否占满整块显示器（全屏时热键不予响应）。</summary>
+    public static bool IsFullscreenActive()
+    {
+        var foreground = ForegroundWindowMonitor.GetCurrentForegroundWindow();
+        return FullscreenWindowDetector.IsFullscreenAppWindow(foreground);
     }
 
     public async Task ShowAllAsync()
@@ -1201,6 +1281,16 @@ public sealed class DesktopBoxManager
         {
             Interlocked.Exchange(ref _showDesktopShortcutObservedUntilTick, 0);
             ShowDesktopActivated?.Invoke(this, EventArgs.Empty);
+        }
+
+        // 热键唤起的盒子：切到别的程序（或桌面）即回落，避免一直压在普通窗口层。
+        if (_revertRaisedOnFocusLoss
+            && !isDesktopBoxWindow
+            && !desktopIsForeground
+            && HasTemporarilyRaisedBoxes)
+        {
+            LowerAllRaised();
+            BoxesRaisedEnded?.Invoke(this, EventArgs.Empty);
         }
 
         ApplyFullscreenSuppression(windowHandle);

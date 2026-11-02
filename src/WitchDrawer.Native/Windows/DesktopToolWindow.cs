@@ -40,11 +40,15 @@ public sealed class DesktopToolWindow
 
     private static readonly nint WindowPositionBottom = 1;
 
+    private static readonly nint WindowPositionTop = 0;
+
     private readonly nint _handle;
     private nint _originalOwner;
     private nint _desktopOwner;
     private bool _desktopOwnershipSuspendedForInput;
     private bool _desktopOwnershipSuspendedForPopup;
+    private bool _keyboardInteractionActive;
+    private bool _temporaryRaiseActive;
 
     public DesktopToolWindow(nint handle)
     {
@@ -366,8 +370,132 @@ public sealed class DesktopToolWindow
 
     public bool IsDesktopOwnershipSuspendedForPopup => _desktopOwnershipSuspendedForPopup;
 
+    /// <summary>
+    /// 进入"可键盘交互"状态：临时清掉 WS_EX_NOACTIVATE 并抬到普通窗口层顶部。
+    /// <para>
+    /// 盒子常态带 WS_EX_NOACTIVATE，点击/热键唤出都不拿键盘焦点，于是
+    /// Delete 删除、方向键选择、右键菜单键盘导航全都用不了。这里只在用户
+    /// 明确要交互时短暂放开：窗口会被激活一次（因此能接收键盘输入），但仍留在
+    /// 普通层（HWND_TOP，不是 HWND_TOPMOST），任何其它软件被点击都会盖住它。
+    /// </para>
+    /// </summary>
+    public bool BeginKeyboardInteraction()
+    {
+        if (!IsAlive)
+        {
+            return false;
+        }
+
+        var extendedStyle = GetWindowLongPtr(_handle, ExtendedStyleIndex);
+        if ((extendedStyle & ExtendedStyleNoActivate) != 0)
+        {
+            SetWindowLongPtr(
+                _handle,
+                ExtendedStyleIndex,
+                extendedStyle & ~ExtendedStyleNoActivate);
+        }
+
+        _keyboardInteractionActive = true;
+
+        // 键盘交互期间不能再用 WM_WINDOWPOSCHANGING 强压 HWND_BOTTOM，
+        // 否则窗口刚被激活就又沉下去，焦点随之丢失。
+        SetWindowPos(
+            _handle,
+            WindowPositionTop,
+            0,
+            0,
+            0,
+            0,
+            SetWindowPositionNoMove
+            | SetWindowPositionNoSize
+            | SetWindowPositionNoActivate);
+        return true;
+    }
+
+    /// <summary>
+    /// 退出"可键盘交互"状态：恢复 WS_EX_NOACTIVATE 并压回桌面层。
+    /// </summary>
+    public bool EndKeyboardInteraction()
+    {
+        if (!IsAlive)
+        {
+            return false;
+        }
+
+        _keyboardInteractionActive = false;
+        var extendedStyle = GetWindowLongPtr(_handle, ExtendedStyleIndex);
+        SetWindowLongPtr(
+            _handle,
+            ExtendedStyleIndex,
+            extendedStyle | ExtendedStyleNoActivate);
+        SendToBottom();
+        return true;
+    }
+
+    /// <summary>当前是否处于"可键盘交互"状态（诊断与测试用）。</summary>
+    public bool IsKeyboardInteractionActive => _keyboardInteractionActive;
+
+    /// <summary>
+    /// WM_WINDOWPOSCHANGING 里是否应该把窗口强制压到底。
+    /// 键盘交互激活期间放行系统排序，否则激活与焦点会立刻被打断。
+    /// </summary>
+    public bool ShouldForceBottomOnPositionChange =>
+        ShouldForceBottomDuringPositionChange(_keyboardInteractionActive || _temporaryRaiseActive);
+
+    /// <summary>
+    /// 热键"临时唤起"：把盒子抬到普通窗口层顶部（HWND_TOP，NOT Topmost），
+    /// 并暂时放行 WM_WINDOWPOSCHANGING 的强制置底。退出后回到常态最底层。
+    /// 与 <see cref="BeginKeyboardInteraction"/> 相互独立，可以叠加。
+    /// </summary>
+    public bool BeginTemporaryRaise()
+    {
+        if (!IsAlive)
+        {
+            return false;
+        }
+
+        _temporaryRaiseActive = true;
+        SetWindowPos(
+            _handle,
+            WindowPositionTop,
+            0,
+            0,
+            0,
+            0,
+            SetWindowPositionNoMove
+            | SetWindowPositionNoSize
+            | SetWindowPositionNoActivate);
+        return true;
+    }
+
+    /// <summary>退出热键临时唤起：恢复强制置底并压回桌面层。</summary>
+    public bool EndTemporaryRaise()
+    {
+        if (!IsAlive)
+        {
+            return false;
+        }
+
+        _temporaryRaiseActive = false;
+        SendToBottom();
+        return true;
+    }
+
+    /// <summary>当前是否处于热键临时唤起状态（诊断用）。</summary>
+    public bool IsTemporaryRaiseActive => _temporaryRaiseActive;
+
+    /// <summary>是否处于任何一种"放开最底层约束"的状态（键盘交互或临时唤起）。</summary>
+    public bool IsElevatedInteractionActive => _keyboardInteractionActive || _temporaryRaiseActive;
+
+
     public void SendToBottom()
     {
+        // 热键临时唤起期间不要把自己压回底部，否则唤起立刻失效。
+        if (_temporaryRaiseActive)
+        {
+            return;
+        }
+
         SetWindowPos(
             _handle,
             WindowPositionBottom,
@@ -404,6 +532,21 @@ public sealed class DesktopToolWindow
         return message == SystemCommandMessage
             && (command & SystemCommandMask) == SystemCommandMinimize;
     }
+
+    /// <summary>
+    /// WM_MOUSEACTIVATE 是否应该返回 MA_NOACTIVATE（吞掉激活）。
+    /// 常态吞掉以保证盒子永不抢焦点；进入可键盘交互后必须放行，
+    /// 否则窗口拿不到键盘焦点、Delete/方向键失效。
+    /// </summary>
+    internal static bool ShouldSuppressMouseActivation(bool isKeyboardInteractionActive) =>
+        !isKeyboardInteractionActive;
+
+    /// <summary>
+    /// WM_WINDOWPOSCHANGING 是否应该强制把盒子压到 Z 序最底。
+    /// 可键盘交互期间必须放行，否则刚激活就被压下去、焦点随即丢失。
+    /// </summary>
+    internal static bool ShouldForceBottomDuringPositionChange(bool isKeyboardInteractionActive) =>
+        !isKeyboardInteractionActive;
 
     public static bool IsMouseActivationMessage(int message) =>
         message == MouseActivateMessage;

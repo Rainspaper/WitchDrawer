@@ -152,6 +152,33 @@ public sealed class DesktopToolWindowTests
             DesktopToolWindow.IsMouseInteractionCompletionMessage(message));
     }
 
+    [Theory]
+    // 常态：吞掉激活（盒子永不抢焦点）、强制压底（永不盖住其它软件）
+    [InlineData(false, true, true)]
+    // 可键盘交互：放行激活、放行 Z 序（否则刚激活就被压底、焦点丢失）
+    [InlineData(true, false, false)]
+    public void KeyboardInteractionState_ControlsActivationAndZOrder(
+        bool isKeyboardInteractionActive,
+        bool expectedSuppressActivation,
+        bool expectedForceBottom)
+    {
+        Assert.Equal(
+            expectedSuppressActivation,
+            DesktopToolWindow.ShouldSuppressMouseActivation(isKeyboardInteractionActive));
+        Assert.Equal(
+            expectedForceBottom,
+            DesktopToolWindow.ShouldForceBottomDuringPositionChange(isKeyboardInteractionActive));
+    }
+
+    [Fact]
+    public void KeyboardInteractionHelpers_MirrorTheInverseOfActiveState()
+    {
+        Assert.True(DesktopToolWindow.ShouldForceBottomDuringPositionChange(false));
+        Assert.False(DesktopToolWindow.ShouldForceBottomDuringPositionChange(true));
+        Assert.True(DesktopToolWindow.ShouldSuppressMouseActivation(false));
+        Assert.False(DesktopToolWindow.ShouldSuppressMouseActivation(true));
+    }
+
     private const uint GetWindowOwner = 4;
 
     [DllImport("user32.dll")]

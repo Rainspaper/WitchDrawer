@@ -229,6 +229,53 @@ public partial class DesktopBoxWindow : Window
         }
     }
 
+    /// <summary>
+    /// 进入"可键盘交互"状态：临时放开 WS_EX_NOACTIVATE、抬到普通窗口层并激活，
+    /// 使 Delete 删除、方向键选择、右键菜单键盘导航可用。
+    /// 窗口仍在普通层（不是 Topmost），点其它软件即被盖住；失活时自动收回。
+    /// </summary>
+    private void BeginKeyboardInteraction()
+    {
+        if (_nativeWindow is null)
+        {
+            return;
+        }
+
+        // 先收敛到确定状态：刚被 QueueSendToBottom 压到底时，BeginKeyboardInteraction
+        // 会重新抬到普通层顶部并清掉 NOACTIVATE。
+        _nativeWindow.BeginKeyboardInteraction();
+        if (!IsActive)
+        {
+            Activate();
+        }
+    }
+
+    /// <summary>
+    /// 热键"临时唤起"：把盒子抬到普通窗口层（非 Topmost），让用户能看见并操作。
+    /// 与键盘交互状态独立：唤起后若用户点击图标，会同时进入键盘交互。
+    /// </summary>
+    public void BeginTemporaryRaise()
+    {
+        _nativeWindow?.BeginTemporaryRaise();
+    }
+
+    /// <summary>热键唤起的落回：恢复强制置底，盒子回到桌面层。</summary>
+    public void EndTemporaryRaise()
+    {
+        _nativeWindow?.EndTemporaryRaise();
+        QueueSendToBottom();
+    }
+
+    /// <summary>当前是否处于热键临时唤起状态。</summary>
+    public bool IsTemporarilyRaised => _nativeWindow?.IsTemporaryRaiseActive == true;
+
+    /// <summary>退出"可键盘交互"状态：恢复 NOACTIVATE 并压回桌面层。</summary>
+    private void EndKeyboardInteraction()
+    {
+        _nativeWindow?.EndKeyboardInteraction();
+        QueueSendToBottom();
+    }
+
     private void SendToBottom()
     {
         if (!ShouldSendToBottom(_desktopIsForeground))
@@ -1319,14 +1366,27 @@ public partial class DesktopBoxWindow : Window
     {
         // 强制置底：只要 Windows 想调整盒子 Z 序，插入位置一律 HWND_BOTTOM，
         // 盒子永远在其他窗口（含系统弹窗）之下，彻底消除被抬起的闪动。
+        // 例外：进入"可键盘交互"状态后必须放行系统排序，否则窗口刚被激活
+        // 就被压回底部、键盘焦点随即丢失（Delete / 方向键因此失效）。
         if (DesktopToolWindow.IsWindowPositionChangingMessage(message)
-            && longParameter != nint.Zero)
+            && longParameter != nint.Zero
+            && (_nativeWindow?.ShouldForceBottomOnPositionChange ?? true))
         {
             DesktopToolWindow.ForceBottomInsertAfter(longParameter);
         }
 
+
         if (DesktopToolWindow.IsMouseActivationMessage(message))
         {
+            // 可键盘交互期间必须让 Windows 正常激活窗口（否则点击后仍拿不到
+            // 键盘焦点，Delete / 方向键照旧失效），但仍要脱离 Shell 属主，
+            // 免得 Explorer 把盒子记成 Progman 的 last active popup。
+            if (_nativeWindow?.IsKeyboardInteractionActive == true)
+            {
+                _nativeWindow.SuspendDesktopOwnershipForMouseInput();
+                return nint.Zero;
+            }
+
             // Detach before mouse input so Explorer cannot record this box as
             // Progman's last active popup. Explicit MA_NOACTIVATE still delivers
             // the click, but guarantees that menu/selection input never makes a
@@ -1496,13 +1556,16 @@ public partial class DesktopBoxWindow : Window
     {
         ClearItemSelection();
         ResetDragVisualState();
-        QueueSendToBottom();
+        // 失活即退出可键盘交互：恢复 NOACTIVATE 并压回桌面层，
+        // 回到"永远不会盖住其它软件"的常态。
+        EndKeyboardInteraction();
     }
 
     private void OnApplicationDeactivated(object? sender, EventArgs e)
     {
         ClearItemSelection();
         ResetDragVisualState();
+        EndKeyboardInteraction();
     }
 
     /// <summary>
@@ -1783,8 +1846,9 @@ public partial class DesktopBoxWindow : Window
 
     private void OnTodoTitlePreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        // 待办输入需要键盘焦点：盒子是 NOACTIVATE，点击本身不激活窗口，
-        // 这里显式激活（用户明确要开始输入，盒子短暂到前面、点别处即收回）。
+        // 待办输入需要键盘焦点：盒子是 NOACTIVATE，点击本身不激活窗口。
+        // 进入可键盘交互状态后再显式激活（用户明确要输入，点别处即收回）。
+        BeginKeyboardInteraction();
         Activate();
         TodoTitleTextBox.Focus();
         Keyboard.Focus(TodoTitleTextBox);
@@ -2275,8 +2339,13 @@ public partial class DesktopBoxWindow : Window
             return;
         }
 
+        // 点中图标 = 用户明确要操作这个盒子：进入可键盘交互状态，让 Delete、
+        // 方向键、右键菜单键盘导航都能用。拖拽本身不受影响（拖拽走 OLE 通道）。
+        BeginKeyboardInteraction();
+
         BeginIconDrag(e, sender as ListBox ?? ActiveItemsList);
     }
+
 
     private async void OnIconMouseMove(object sender, MouseEventArgs e)
     {
