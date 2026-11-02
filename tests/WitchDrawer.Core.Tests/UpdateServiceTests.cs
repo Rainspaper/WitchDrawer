@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using WitchDrawer.Core.Logging;
 using WitchDrawer.Core.Services;
 
@@ -259,7 +259,7 @@ public sealed class UpdateServiceTests
         }
         finally
         {
-            await DeleteDirectoryWithRetryAsync(testRoot, TimeSpan.FromSeconds(5));
+            await DeleteDirectoryWithRetryAsync(testRoot, TimeSpan.FromSeconds(30));
         }
     }
 
@@ -321,7 +321,7 @@ public sealed class UpdateServiceTests
         }
         finally
         {
-            await DeleteDirectoryWithRetryAsync(testRoot, TimeSpan.FromSeconds(5));
+            await DeleteDirectoryWithRetryAsync(testRoot, TimeSpan.FromSeconds(30));
         }
     }
 
@@ -391,7 +391,7 @@ public sealed class UpdateServiceTests
         }
         finally
         {
-            await DeleteDirectoryWithRetryAsync(testRoot, TimeSpan.FromSeconds(5));
+            await DeleteDirectoryWithRetryAsync(testRoot, TimeSpan.FromSeconds(30));
         }
     }
 
@@ -453,7 +453,7 @@ public sealed class UpdateServiceTests
         }
         finally
         {
-            await DeleteDirectoryWithRetryAsync(testRoot, TimeSpan.FromSeconds(5));
+            await DeleteDirectoryWithRetryAsync(testRoot, TimeSpan.FromSeconds(30));
         }
     }
 
@@ -507,7 +507,7 @@ public sealed class UpdateServiceTests
         }
         finally
         {
-            await DeleteDirectoryWithRetryAsync(testRoot, TimeSpan.FromSeconds(5));
+            await DeleteDirectoryWithRetryAsync(testRoot, TimeSpan.FromSeconds(30));
         }
     }
 
@@ -521,6 +521,11 @@ public sealed class UpdateServiceTests
         }
     }
 
+    /// <summary>
+    /// 删除测试目录。updater.cmd 结束后，cmd.exe 释放 updater.log / 目录句柄仍有一小段
+    /// 非同步窗口，CI（慢磁盘、Windows Defender 实时扫描）上经常正好撞上；
+    /// 这里延长重试窗口并触发 GC 让托管句柄尽快回收。
+    /// </summary>
     private static async Task DeleteDirectoryWithRetryAsync(string path, TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
@@ -533,11 +538,13 @@ public sealed class UpdateServiceTests
             }
             catch (IOException) when (DateTime.UtcNow < deadline)
             {
-                await Task.Delay(50);
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                await Task.Delay(100);
             }
             catch (UnauthorizedAccessException) when (DateTime.UtcNow < deadline)
             {
-                await Task.Delay(50);
+                await Task.Delay(100);
             }
         }
     }

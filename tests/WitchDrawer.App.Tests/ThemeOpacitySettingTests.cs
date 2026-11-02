@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.IO;
 using WitchDrawer.App.Infrastructure;
 using WitchDrawer.App.ViewModels;
@@ -262,6 +262,34 @@ public sealed class ThemeOpacitySettingTests
         return opacity.ToString("0.00", CultureInfo.InvariantCulture);
     }
 
+    /// <summary>
+    /// 删除测试目录。SQLite 关闭最后一个连接与释放 -wal/-shm 句柄之间有一小段
+    /// 非同步窗口，CI（慢磁盘、杀毒扫描）上经常正好撞上；这里带重试并触发 GC，
+    /// 让句柄尽快回收。
+    /// </summary>
+    private static void DeleteDirectoryWithRetry(string path, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (Directory.Exists(path))
+        {
+            try
+            {
+                Directory.Delete(path, recursive: true);
+                return;
+            }
+            catch (IOException) when (DateTime.UtcNow < deadline)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                Thread.Sleep(50);
+            }
+            catch (UnauthorizedAccessException) when (DateTime.UtcNow < deadline)
+            {
+                Thread.Sleep(50);
+            }
+        }
+    }
+
     private sealed class ThemeWorkspace : IAsyncDisposable
     {
         private ThemeWorkspace(
@@ -315,7 +343,7 @@ public sealed class ThemeOpacitySettingTests
         {
             if (Directory.Exists(Root))
             {
-                Directory.Delete(Root, recursive: true);
+                DeleteDirectoryWithRetry(Root, TimeSpan.FromSeconds(10));
             }
 
             return ValueTask.CompletedTask;
