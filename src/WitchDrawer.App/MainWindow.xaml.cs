@@ -103,7 +103,6 @@ public partial class MainWindow : Window
             OnTodoDailyResetTimerTick,
             Dispatcher);
         _todoDailyResetTimer.Start();
-        _todoDailyResetTimer.Start();
 
         // 热键设置页初始状态：显示当前键位（可能为空=未设置）并选中回落时机。
         UpdateBoxesHotKeyUi(_boxesHotKey.IsEmpty ? "未设置（点击后按键）" : "点击按钮可修改");
@@ -126,6 +125,23 @@ public partial class MainWindow : Window
     {
         Hide();
         WindowHidden?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// 静默自启路径不会调用 <see cref="Window.Show"/>，WPF 因此不会创建 HWND，也就不会
+    /// 触发 <see cref="OnSourceInitialized"/> —— 两个全局热键正是在那里注册的。结果是开机
+    /// 自启后热键根本没注册过，用户必须手动把主窗口打开一次才能用。
+    /// 这里显式建 HWND：不设 WS_VISIBLE，窗口仍然不可见（不会闪一下），但热键能就位。
+    /// </summary>
+    internal void EnsureHotKeysReady()
+    {
+        if (_windowClosed || _source is not null)
+        {
+            return;
+        }
+
+        var handle = new WindowInteropHelper(this).EnsureHandle();
+        _logger.Info($"[perf] main window handle created for background start: 0x{handle.ToInt64():X}.");
     }
 
     public void RestoreFromTray()

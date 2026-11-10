@@ -372,6 +372,10 @@ public partial class App : Application
             // 3. 最后显示主窗口（非静默），避免主窗口渲染与桌面盒创建同时抢占 GPU/CPU
             if (silentStart)
             {
+                // 静默自启不会 Show 主窗口，WPF 就不会创建 HWND，OnSourceInitialized
+                // 不会触发，两个全局热键也就没注册——开机后必须手动打开一次主窗口才能用。
+                // 这里先建 HWND（不显示）再收进托盘，让热键在后台启动时就位。
+                _mainWindow.EnsureHotKeysReady();
                 _mainWindow.MinimizeToTray();
             }
             else
